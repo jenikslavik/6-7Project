@@ -204,12 +204,6 @@ def create_csv(ticker):
     return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
-def wacc(ticker):
-    market_cap = yf.Ticker(ticker).info.get('marketCap')
-    
-    print(market_cap)
-
-
 def spreadsheet():
     csv_file = '/home/mo-lester/Documents/6-7 Project/output.csv'
     sheet_name = 'Untitled spreadsheet'
@@ -247,8 +241,6 @@ def run():
 
     create_csv(ticker)
     spreadsheet()
-
-    wacc(ticker)
 
 
 run()
