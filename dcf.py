@@ -24,16 +24,16 @@ def wacc(ticker):
         'LongTermDebt',
         'OperatingLeaseLiabilityNoncurrent'
     ]
-    
-    my_dict = {}
+    debt_book_value = []
     for metric in needed_metrics:
-        new_row = {
-            metric: int(companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val'] / 1000000)
-        }
-        my_dict.update(new_row)
+        debt_book_value.append(int(companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val'] / 1000000))
+    debt_book_value = sum(debt_book_value)
 
-    print(my_dict)
+    risk_free_rate = yf.Ticker('^TNX').history(period="1d")["Close"].iloc[-1] / 100
+    beta = ticker.info.get('beta')
+    cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
+    interest_expense = 'InterestExpenseNonoperating'
 
 
 
