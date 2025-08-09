@@ -16,18 +16,23 @@ def get_companyData(ticker):
 
 def wacc(ticker):
     companyData = get_companyData(ticker)
-
     ticker = yf.Ticker(ticker)
-
 
     market_cap = int(ticker.info.get('marketCap') / 1000000)
 
     needed_metrics = [
         'LongTermDebt',
+        'OperatingLeaseLiabilityNoncurrent'
     ]
     
+    my_dict = {}
     for metric in needed_metrics:
-        print(int(companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val'] / 1000000))
+        new_row = {
+            metric: int(companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val'] / 1000000)
+        }
+        my_dict.update(new_row)
+
+    print(my_dict)
 
 
 
