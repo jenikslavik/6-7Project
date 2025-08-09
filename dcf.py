@@ -33,7 +33,8 @@ def wacc(ticker):
     beta = ticker.info.get('beta')
     cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
-    interest_expense = 'InterestExpenseNonoperating'
+    interest_expense = companyData['facts']['us-gaap']['InterestExpenseNonoperating']['units']['USD'][-1]['val']
+
 
 
 
