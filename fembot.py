@@ -3,6 +3,7 @@ import requests
 import numpy as np
 import pandas as pd
 import gspread
+import yfinance as yf
 from google.oauth2.service_account import Credentials
 
 
@@ -200,11 +201,17 @@ def create_csv(ticker):
     
         df[metric] = df[metric].astype(int)
 
-    return df.to_csv('output.csv', index=False)
+    return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
+
+
+def wacc(ticker):
+    market_cap = yf.Ticker(ticker).info.get('marketCap')
+    
+    print(market_cap)
 
 
 def spreadsheet():
-    csv_file = 'output.csv'
+    csv_file = '/home/mo-lester/Documents/6-7 Project/output.csv'
     sheet_name = 'Untitled spreadsheet'
     credentials_file = '/home/mo-lester/Documents/6-7 Project/service-account.json'
     
@@ -235,5 +242,13 @@ def spreadsheet():
 
 
 
-create_csv(ticker = input("Enter stock ticker symbol (e.g., AAPL, MSFT): ").upper())
-spreadsheet()
+def run():
+    ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
+
+    create_csv(ticker)
+    spreadsheet()
+
+    wacc(ticker)
+
+
+run()
