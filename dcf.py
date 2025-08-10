@@ -83,16 +83,16 @@ def wacc(ticker):
     corporate_tax_rate = .21
 
     return {
-        'market_cap': int(market_cap),
-        'long_term_debt': int(book_value_of_debt[0]),
-        'operating_lease_liabilities': int(book_value_of_debt[1]),
-        'book_value_of_debt': int(sum(book_value_of_debt)),
+        'market_cap': int(market_cap / 1000000),
+        'long_term_debt': book_value_of_debt[0] / 1000000,
+        'operating_lease_liabilities': book_value_of_debt[1] / 1000000,
+        'book_value_of_debt': sum(book_value_of_debt) / 1000000,
         'risk_free_rate': risk_free_rate,
         'beta': beta,
         'cost_of_equity': cost_of_equity,
-        'interest_expense': int(interest_expense),
+        'interest_expense': interest_expense / 1000000,
         'cost_of_debt': cost_of_debt,
-        'wacc': ((market_cap / (market_cap + int(sum(book_value_of_debt)))) * cost_of_equity) + ((int(sum(book_value_of_debt)) / (market_cap + int(sum(book_value_of_debt)))) * cost_of_debt * (1-corporate_tax_rate))
+        'wacc': ((market_cap / (market_cap + sum(book_value_of_debt))) * cost_of_equity) + ((sum(book_value_of_debt) / (market_cap + sum(book_value_of_debt))) * cost_of_debt * (1-corporate_tax_rate))
     }
 
 
@@ -116,6 +116,28 @@ def spreadsheet(ticker):
         worksheet.update(f'B{str(pos)}', [[wacc(ticker)[cell]]])
         
         pos += 1
+
+    worksheet.spreadsheet.batch_update({
+        "requests": [
+            {
+                "autoResizeDimensions": {
+                    "dimensions": {
+                        "sheetId": worksheet.id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 0,  # Column A
+                        "endIndex": 1
+                    }
+                }
+            }
+        ]
+    })
+
+    df = pd.DataFrame({
+        'Year': [2024, 2025, 2026],
+        'Revenue': [350018, 402521, 462899]
+    })
+
+    worksheet.update('C1', [df.columns.values.tolist()] + df.values.tolist())
 
 
 
