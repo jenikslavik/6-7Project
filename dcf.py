@@ -73,23 +73,56 @@ def wacc(ticker):
     book_value_of_debt = []
     for metric in needed_metrics:
         book_value_of_debt.append(companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val'])
-    book_value_of_debt = sum(book_value_of_debt)
 
     risk_free_rate = yf.Ticker('^TNX').history(period='1d')['Close'].iloc[-1] / 100
     beta = yf.Ticker(ticker).info.get('beta')
     cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
     interest_expense = calculate_ttm_interest_expense(ticker)
-    cost_of_debt = interest_expense / book_value_of_debt
+    cost_of_debt = interest_expense / sum(book_value_of_debt)
     corporate_tax_rate = .21
 
-    return ((market_cap / (market_cap + book_value_of_debt)) * cost_of_equity) + ((book_value_of_debt / (market_cap + book_value_of_debt)) * cost_of_debt * (1-corporate_tax_rate))
+    return {
+        'market_cap': int(market_cap),
+        'long_term_debt': int(book_value_of_debt[0]),
+        'operating_lease_liabilities': int(book_value_of_debt[1]),
+        'book_value_of_debt': int(sum(book_value_of_debt)),
+        'risk_free_rate': risk_free_rate,
+        'beta': beta,
+        'cost_of_equity': cost_of_equity,
+        'interest_expense': int(interest_expense),
+        'cost_of_debt': cost_of_debt,
+        'wacc': ((market_cap / (market_cap + int(sum(book_value_of_debt)))) * cost_of_equity) + ((int(sum(book_value_of_debt)) / (market_cap + int(sum(book_value_of_debt)))) * cost_of_debt * (1-corporate_tax_rate))
+    }
+
+
+
+def spreadsheet(ticker):
+    sheet_name = 'Untitled spreadsheet'
+    credentials_file = '/home/mo-lester/Documents/6-7 Project/service-account.json'
+    
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    credentials = Credentials.from_service_account_file(credentials_file, scopes=scopes)
+    gc = gspread.authorize(credentials)
+
+    spreadsheet = gc.open(sheet_name)
+    worksheet = spreadsheet.sheet1
+
+    worksheet.clear()
+
+    pos = 1
+    for cell in wacc(ticker):
+        worksheet.update(f'A{str(pos)}', [[cell]])
+        worksheet.update(f'B{str(pos)}', [[wacc(ticker)[cell]]])
+        
+        pos += 1
+
 
 
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 
-    # print(f'{round((wacc(ticker)*100), 2)}%')
+    spreadsheet(ticker)
 
 
 run()
