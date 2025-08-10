@@ -1,7 +1,9 @@
 import json
 import requests
 import pandas as pd
+import gspread
 import yfinance as yf
+from google.oauth2.service_account import Credentials
 
 
 def get_companyData(ticker):
@@ -13,7 +15,6 @@ def get_companyData(ticker):
             cik = str(v['cik_str']).zfill(10)
     
     return requests.get(f'https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json', headers={'User-Agent': 'janslavik311@gmail.com'}).json()
-
 
 
 def calculate_ttm_interest_expense(ticker):
@@ -60,7 +61,6 @@ def calculate_ttm_interest_expense(ticker):
     return df['val'].iloc[-4:].sum()
 
 
-
 def wacc(ticker):
     companyData = get_companyData(ticker)
 
@@ -86,11 +86,10 @@ def wacc(ticker):
     return ((market_cap / (market_cap + book_value_of_debt)) * cost_of_equity) + ((book_value_of_debt / (market_cap + book_value_of_debt)) * cost_of_debt * (1-corporate_tax_rate))
 
 
-
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 
-    print(wacc(ticker))
+    # print(f'{round((wacc(ticker)*100), 2)}%')
 
 
 run()

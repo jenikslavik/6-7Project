@@ -18,7 +18,6 @@ def companyData(ticker):
     return requests.get(f'https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json', headers={'User-Agent': 'janslavik311@gmail.com'}).json()
 
 
-
 def find_available_metrics(companyFacts):
     us_gaap = companyFacts['us-gaap']
     
@@ -53,7 +52,6 @@ def find_available_metrics(companyFacts):
                 break
         
     return available_metrics
-
 
 
 def collect_rows(companyFacts, available_metrics):
@@ -93,7 +91,6 @@ def collect_rows(companyFacts, available_metrics):
     return q, y
 
 
-
 def tidy_dataframe(rows):        
     df = pd.DataFrame(rows).dropna(subset=['value'])
 
@@ -110,7 +107,6 @@ def tidy_dataframe(rows):
     df['filed'] = pd.to_datetime(df['filed'], errors='coerce')
     
     return df.sort_values('end_date')
-
 
 
 def calculate_q4(df, available_metrics):        
@@ -151,7 +147,6 @@ def calculate_q4(df, available_metrics):
             })
 
     return tidy_dataframe(q4)
-
 
 
 def assign_quarter(row):
@@ -210,7 +205,6 @@ def create_csv(ticker):
     return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
-
 def spreadsheet():
     csv_file = '/home/mo-lester/Documents/6-7 Project/output.csv'
     sheet_name = 'Untitled spreadsheet'
@@ -239,7 +233,6 @@ def spreadsheet():
     worksheet.update([df.columns.tolist()] + new_rows)
 
     print(f"✅ Spreadsheet '{sheet_name}' updated with Q4 blank rows.")
-
 
 
 def run():
