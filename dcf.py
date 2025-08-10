@@ -1,5 +1,6 @@
 import json
 import requests
+import pandas as pd
 import yfinance as yf
 
 
@@ -14,34 +15,78 @@ def get_companyData(ticker):
     return requests.get(f'https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json', headers={'User-Agent': 'janslavik311@gmail.com'}).json()
 
 
+
+def calculate_ttm_interest_expense(ticker):
+    companyData = get_companyData(ticker)
+
+    rows = []
+    q4_rows = []
+    for entry in companyData['facts']['us-gaap']['InterestExpenseNonoperating']['units']['USD']:
+        start, end = pd.to_datetime([entry['start'], entry['end']])
+        duration = (end-start).days
+        if 85 <= duration <= 95:
+            row = {
+                'start': entry['start'],
+                'end': entry['end'],
+                'duration': duration,
+                'fp': entry['fp'],
+                'val': entry['val'],
+                'filed': entry['filed']
+            }
+            rows.append(row)
+        if 270 <= duration <= 370:
+            row = {
+                'start': entry['start'],
+                'end': entry['end'],
+                'duration': duration,
+                'fp': entry['fp'],
+                'val': entry['val'],
+                'filed': entry['filed']
+            }
+            q4_rows.append(row)
+
+    q4_df = pd.DataFrame(q4_rows)
+    q4 = q4_df[q4_df['fp'] == 'FY']['val'].iloc[-1] - q4_df[q4_df['fp'] == 'Q3']['val'].iloc[-1]
+    print(q4)
+
+#    df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
+#    df = df.sort_values('filed', ascending=True)
+#    df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True)
+
+
+
 def wacc(ticker):
     companyData = get_companyData(ticker)
     ticker = yf.Ticker(ticker)
 
-    market_cap = int(ticker.info.get('marketCap') / 1000000)
+    market_cap = ticker.info.get('marketCap')
 
     needed_metrics = [
         'LongTermDebt',
         'OperatingLeaseLiabilityNoncurrent'
     ]
-    debt_book_value = []
+    book_value_of_debt = []
     for metric in needed_metrics:
-        debt_book_value.append(int(companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val'] / 1000000))
-    debt_book_value = sum(debt_book_value)
+        book_value_of_debt.append(companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val'])
+    book_value_of_debt = sum(book_value_of_debt)
 
-    risk_free_rate = yf.Ticker('^TNX').history(period="1d")["Close"].iloc[-1] / 100
+    risk_free_rate = yf.Ticker('^TNX').history(period='1d')['Close'].iloc[-1] / 100
     beta = ticker.info.get('beta')
     cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
     interest_expense = companyData['facts']['us-gaap']['InterestExpenseNonoperating']['units']['USD'][-1]['val']
+    cost_of_debt = interest_expense / book_value_of_debt
+    corporate_tax_rate = .21
 
+    return ((market_cap / (market_cap + book_value_of_debt)) * cost_of_equity) + ((book_value_of_debt / (market_cap + book_value_of_debt)) * cost_of_debt * (1-corporate_tax_rate))
 
 
 
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 
-    wacc(ticker)
+    calculate_ttm_interest_expense(ticker)
+#    print(wacc(ticker))
 
 
 run()
