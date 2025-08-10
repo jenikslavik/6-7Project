@@ -28,7 +28,6 @@ def calculate_ttm_interest_expense(ticker):
             row = {
                 'start': entry['start'],
                 'end': entry['end'],
-                'duration': duration,
                 'fp': entry['fp'],
                 'val': entry['val'],
                 'filed': entry['filed']
@@ -38,28 +37,34 @@ def calculate_ttm_interest_expense(ticker):
             row = {
                 'start': entry['start'],
                 'end': entry['end'],
-                'duration': duration,
                 'fp': entry['fp'],
                 'val': entry['val'],
                 'filed': entry['filed']
             }
             q4_rows.append(row)
 
-    q4_df = pd.DataFrame(q4_rows)
-    q4 = q4_df[q4_df['fp'] == 'FY']['val'].iloc[-1] - q4_df[q4_df['fp'] == 'Q3']['val'].iloc[-1]
-    print(q4)
+    df = pd.DataFrame(q4_rows)
+    rows.append({
+        'start': df['end'].iloc[-2],
+        'end': df['end'].iloc[-1],
+        'fp': 'Q4',
+        'val': df[df['fp'] == 'FY']['val'].iloc[-1] - df[df['fp'] == 'Q3']['val'].iloc[-1],
+        'filed': df['filed'].iloc[-1]
+    })    
+    df = pd.DataFrame(rows)
 
-#    df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
-#    df = df.sort_values('filed', ascending=True)
-#    df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True)
+    df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
+    df = df.sort_values('filed', ascending=True)
+    df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True)
+
+    return df['val'].iloc[-4:].sum()
 
 
 
 def wacc(ticker):
     companyData = get_companyData(ticker)
-    ticker = yf.Ticker(ticker)
 
-    market_cap = ticker.info.get('marketCap')
+    market_cap = yf.Ticker(ticker).info.get('marketCap')
 
     needed_metrics = [
         'LongTermDebt',
@@ -71,10 +76,10 @@ def wacc(ticker):
     book_value_of_debt = sum(book_value_of_debt)
 
     risk_free_rate = yf.Ticker('^TNX').history(period='1d')['Close'].iloc[-1] / 100
-    beta = ticker.info.get('beta')
+    beta = yf.Ticker(ticker).info.get('beta')
     cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
-    interest_expense = companyData['facts']['us-gaap']['InterestExpenseNonoperating']['units']['USD'][-1]['val']
+    interest_expense = calculate_ttm_interest_expense(ticker)
     cost_of_debt = interest_expense / book_value_of_debt
     corporate_tax_rate = .21
 
@@ -85,8 +90,7 @@ def wacc(ticker):
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 
-    calculate_ttm_interest_expense(ticker)
-#    print(wacc(ticker))
+    print(wacc(ticker))
 
 
 run()
