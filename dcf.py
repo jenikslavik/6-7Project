@@ -96,6 +96,34 @@ def wacc(ticker):
     }
 
 
+def get_fcf(ticker):
+    companyData = get_companyData(ticker)
+
+    rows = []
+    for entry in companyData['facts']['us-gaap']['NetCashProvidedByUsedInOperatingActivities']['units']['USD']:
+        start, end = pd.to_datetime([entry['start'], entry['end']])
+        duration = (end-start).days      
+        row = {
+            'start': entry['start'],
+            'end': entry['end'],
+            'fp': entry['fp'],
+            'duration': duration,
+            'val': entry['val'],
+            'filed': entry['filed']
+        }
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
+    df = df.sort_values('filed', ascending=False)
+    df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True)
+
+    print(df.to_string(index=False))
+
+
+def fcf_forecast():
+    growth_timespan = int(input('Enter the growth timespan (in years): '))
+
 
 def spreadsheet(ticker):
     sheet_name = 'Untitled spreadsheet'
@@ -140,11 +168,10 @@ def spreadsheet(ticker):
     worksheet.update('C1', [df.columns.values.tolist()] + df.values.tolist())
 
 
-
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 
-    spreadsheet(ticker)
+    get_fcf(ticker)
 
 
 run()
