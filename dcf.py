@@ -133,17 +133,19 @@ def get_metrics_to_calculate_fcf(ticker, metric):
             }
         rows.append(row)
 
-    df = pd.DataFrame(rows)
-    print(df)
-
+    return pd.DataFrame(rows)
 
 def get_and_plot_fcf(ticker):
     metrics = [
         'NetCashProvidedByUsedInOperatingActivities',
         'PaymentsToAcquirePropertyPlantAndEquipment'
     ]
+
+    df = pd.DataFrame()
     for metric in metrics:
-        get_metrics_to_calculate_fcf(ticker, metric)
+        df = pd.concat([df, get_metrics_to_calculate_fcf(ticker, metric)], ignore_index=True)
+
+    print(df)
 
 
 def fcf_forecast():
