@@ -107,8 +107,8 @@ def get_fcf(ticker):
             'start': entry['start'],
             'end': entry['end'],
             'fp': entry['fp'],
-            'duration': duration,
-            'val': entry['val'],
+            'duration': int(duration),
+            'val': entry['val'] / 1000000,
             'filed': entry['filed']
         }
         rows.append(row)
@@ -116,9 +116,11 @@ def get_fcf(ticker):
     df = pd.DataFrame(rows)
     df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
     df = df.sort_values('filed', ascending=False)
-    df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True)
+    df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns=['start', 'end', 'filed'])
 
-    print(df.to_string(index=False))
+    print(df)
+    # print(df['val'].diff())
+    # print(df[df['duration'] > 90])
 
 
 def fcf_forecast():
