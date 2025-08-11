@@ -118,9 +118,23 @@ def get_fcf(ticker):
     df = df.sort_values('filed', ascending=False)
     df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns=['start', 'end', 'filed'])
 
+    rows = []
+    for pos in range(len(df)):
+        if df['fp'].iloc[pos] == 'Q1':
+            row = {
+                'fp': df['fp'].iloc[pos],
+                'val': df['val'].iloc[pos]
+            }
+        else:
+            val = df['val'].iloc[pos] - df['val'].iloc[pos-1]
+            row = {
+                'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
+                'val': val
+            }
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
     print(df)
-    # print(df['val'].diff())
-    # print(df[df['duration'] > 90])
 
 
 def fcf_forecast():
