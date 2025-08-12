@@ -214,11 +214,8 @@ def get_and_plot_fcf(ticker):
         'PaymentsToAcquirePropertyPlantAndEquipment'
     ]
 
-    df = pd.DataFrame()
     for metric in metrics:
-        df = pd.merge(df, get_metrics_to_calculate_fcf(ticker, metric), on=['fp'], how='outer')
-
-    print(df)
+        print(get_metrics_to_calculate_fcf(ticker, metric).info())
 
 
 def fcf_forecast():
