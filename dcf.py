@@ -21,7 +21,7 @@ def get_companyData(ticker):
     ).json()
 
 
-def calculate_ttm_interest_expense(ticker):
+def ttm_interest_expense(ticker):
     companyData = get_companyData(ticker)
 
 
@@ -95,7 +95,7 @@ def wacc(ticker):
     beta = yf.Ticker(ticker).info.get('beta')
     cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
-    interest_expense = calculate_ttm_interest_expense(ticker)
+    interest_expense = ttm_interest_expense(ticker)
     cost_of_debt = interest_expense / sum(book_value_of_debt)
     corporate_tax_rate = .21
 
@@ -131,7 +131,7 @@ def fcf(ticker):
         for metric in value:
             rows = []
             df = pd.DataFrame()
-            metric = 'NetCashProvidedByUsedInOperatingActivities'
+            metric = 'PaymentsToAcquirePropertyPlantAndEquipment'
             for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
                 start, end = pd.to_datetime([entry['start'], entry['end']])
                 duration = (end-start).days
@@ -149,7 +149,9 @@ def fcf(ticker):
 
             df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
             df = df.sort_values('filed', ascending=False)
-            df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns=['start', 'filed'])
+            df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns='filed')
+
+            return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
             for idx in sorted(df.index, reverse=True):
                 if df.at[idx, 'duration'] < 95 and df.at[idx, 'fp'] != 'Q1':
@@ -160,19 +162,21 @@ def fcf(ticker):
             for pos in range(len(df)):
                 if df['fp'].iloc[pos] == 'Q1':
                     row = {
-                        'fp': df['fp'].iloc[pos],
                         'end': df['end'].iloc[pos],
+                        'fp': df['fp'].iloc[pos],
                         key: df[key].iloc[pos]
                     }
                 else:
                     val = df[key].iloc[pos] - df[key].iloc[pos-1]
                     row = {
-                        'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
                         'end': df['end'].iloc[pos],
+                        'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
                         key: val
                     }
                 rows.append(row)
 
+            df = pd.DataFrame(rows)
+            
             return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
