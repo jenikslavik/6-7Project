@@ -1,65 +1,38 @@
-import json # Handles reading/writing JSON files
-import requests # Makes HTTP requests to fetch data from APIs
-import pandas as pd # For working with tabular data
+import json
+import requests
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-import gspread # Google Sheets API client
-import yfinance as yf # Yahoo Finance API client
-from google.oauth2.service_account import Credentials # Auth for Google APIs
+import yfinance as yf
 
 
-# Fetch SEC company facts JSON based on ticker
 def get_companyData(ticker):
-    with open('/home/mo-lester/Documents/6-7 Project/company_tickers.json', 'r') as f: # Open and load the file that links tickers to SEC CIKs
+    with open('/home/mo-lester/Documents/6-7 Project/company_tickers.json', 'r') as f:
         data = json.load(f)
 
 
-    #    "4": {
-    #        "cik_str": 1652044,
-    #        "ticker": "GOOGL",
-    #        "title": "Alphabet Inc."
-    #    },
-
-
-    for v in data.values(): # Loop through every block in the JSON file to find the matching ticker
+    for v in data.values():
         if v['ticker'] == ticker:
-            cik = str(v['cik_str']).zfill(10) # Pad CIK to 10 digits for SEC URL format
+            cik = str(v['cik_str']).zfill(10)
     
-    # Fetch the company's SEC "company facts" JSON file from URL
     return requests.get(
         f'https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json',
         headers={'User-Agent': 'janslavik311@gmail.com'}
     ).json()
 
 
-# Calculate TTM interest expense (Needed for WACC calculation later)
+
+
 def calculate_ttm_interest_expense(ticker):
-    companyData = get_companyData(ticker) # Fetch company facts JSON
+    companyData = get_companyData(ticker)
 
-    # Quarterly (Q1–Q3) interest expense is reported directly for 3-month periods
-    # Q4 is reported as the full-year (FY) value → so we must subtract Q3 YTD from FY to get Q4-only
-
-    # I need to create lists first, so that I can later turn them into DataFrames
     rows = []
     q4_rows = []
 
-    #    {
-    #        "start": "2022-01-01",
-    #        "end": "2022-12-31",
-    #        "val": 357000000,
-    #        "accn": "0001652044-25-000014",
-    #        "fy": 2024,
-    #        "fp": "FY",
-    #        "form": "10-K",
-    #        "filed": "2025-02-05",
-    #        "frame": "CY2022"
-    #    },
 
-    # Loop through each block in the InterestExpenseNonoperating dictionary
-    # The blocks are similar to the ones in company_tickers.json
     for entry in companyData['facts']['us-gaap']['InterestExpenseNonoperating']['units']['USD']:
-        start, end = pd.to_datetime([entry['start'], entry['end']]) # Format dates so that I can make calculations with them
+        start, end = pd.to_datetime([entry['start'], entry['end']])
         duration = (end - start).days
 
         # Identify quarterly reports (approx. 3 months)
@@ -84,44 +57,33 @@ def calculate_ttm_interest_expense(ticker):
             }
             q4_rows.append(row)
 
-    # Create a DataFrame of yearly (FY) entries
     df = pd.DataFrame(q4_rows)
 
 
-    #           start         end  fp        val       filed
-    #   0  2022-01-01  2022-12-31  FY  357000000  2025-02-05
-    #   1  2023-01-01  2023-09-30  Q3  239000000  2024-10-30
-    #   2  2023-01-01  2023-12-31  FY  308000000  2025-02-05
-    #   3  2024-01-01  2024-09-30  Q3  215000000  2024-10-30
-    #   4  2024-01-01  2024-12-31  FY  268000000  2025-02-05
-
-
-    # Add a calculated Q4-only row
     rows.append({
         'start': df['end'].iloc[-2],
         'end': df['end'].iloc[-1],
         'fp': 'Q4',
-        'val': df[df['fp'] == 'FY']['val'].iloc[-1] - df[df['fp'] == 'Q3']['val'].iloc[-1],     # calculation: FY value minus Q3 YTD value
+        'val': df[df['fp'] == 'FY']['val'].iloc[-1] - df[df['fp'] == 'Q3']['val'].iloc[-1],
         'filed': df['filed'].iloc[-1]
     })
 
     # Rebuild DataFrame with all quarterly entries (Q1–Q4)
     df = pd.DataFrame(rows)
-    df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))  # parse dates for operating with them
-    df = df.sort_values('filed', ascending=True)  # oldest to newest by filed date
+    df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
+    df = df.sort_values('filed', ascending=True)
     df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True)
 
-    # Return sum of last 4 quarters (TTM)
     return df['val'].iloc[-4:].sum()
 
 
-# Calculate WACC
+
+
 def wacc(ticker):
     companyData = get_companyData(ticker)
 
-    market_cap = yf.Ticker(ticker).info.get('marketCap')  # Yahoo Finance market cap
+    market_cap = yf.Ticker(ticker).info.get('marketCap')
 
-    # Names of Long-term debt and Operating liabilities in the SEC companyData JSON file
     needed_metrics = [
         'LongTermDebt',
         'OperatingLeaseLiabilityNoncurrent'
@@ -132,18 +94,16 @@ def wacc(ticker):
             companyData['facts']['us-gaap'][metric]['units']['USD'][-1]['val']
         )
 
-    # Risk-free rate from 10-year Treasury yield
     risk_free_rate = yf.Ticker('^TNX').history(period='1d')['Close'].iloc[-1] / 100
-    beta = yf.Ticker(ticker).info.get('beta')  # Yahoo Finance beta
+    beta = yf.Ticker(ticker).info.get('beta')
     cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
-    interest_expense = calculate_ttm_interest_expense(ticker)  # TTM interest expense
-    cost_of_debt = interest_expense / sum(book_value_of_debt)  # pre-tax cost of debt
+    interest_expense = calculate_ttm_interest_expense(ticker)
+    cost_of_debt = interest_expense / sum(book_value_of_debt)
     corporate_tax_rate = .21
 
-    # Return a dictionary of all metrics
     return {
-        'market_cap': int(market_cap / 1_000_000),  # in millions
+        'market_cap': int(market_cap / 1_000_000),
         'long_term_debt': book_value_of_debt[0] / 1_000_000,
         'operating_lease_liabilities': book_value_of_debt[1] / 1_000_000,
         'book_value_of_debt': sum(book_value_of_debt) / 1_000_000,
@@ -160,161 +120,70 @@ def wacc(ticker):
     }
 
 
-# Build a clean DataFrame for NetCashFromOperations and CapitalExpenditures
-def get_cfoa_and_capex(ticker, metric):
+
+
+def fcf(ticker):
     companyData = get_companyData(ticker)
 
-    rows = []
-    for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
-        start, end = pd.to_datetime([entry['start'], entry['end']])
-        duration = (end-start).days      
-        row = {
-            'start': entry['start'],
-            'end': entry['end'],
-            'fp': entry['fp'],
-            'duration': int(duration),
-            'val': entry['val'] / 1_000_000,
-            'filed': entry['filed']
-        }
-        rows.append(row)
+    metrics = {
+        'cfoa': ['NetCashProvidedByUsedInOperatingActivities'],
+        'capex': ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets']
+    }
 
-    # Build DataFrame, sort by filing date, drop duplicates, then sort by end date
-    df = pd.DataFrame(rows)
-    df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
-    df = df.sort_values('filed', ascending=False)
-    df = df.drop_duplicates(['start', 'end'], keep='first') \
-           .sort_values('end', ascending=True) \
-           .drop(columns=['start', 'filed'])
-
-    for idx in sorted(df.index, reverse=True):
-        if df.at[idx, 'duration'] < 95 and df.at[idx, 'fp'] != 'Q1':
-            df.drop(index=idx, inplace=True)
-
-    # Rename 'val' to metric name for later merging the two DFs together
-    df = df.rename(columns={'val': metric})
-
-    # Adjust values: for Q1 keep as-is, for Q2–Q4 subtract previous quarter (all values are in YTD format)
-    rows = []
-    for pos in range(len(df)):
-        if df['fp'].iloc[pos] == 'Q1':
-            row = {
-                'fp': df['fp'].iloc[pos],
-                'end': df['end'].iloc[pos],
-                metric: df[metric].iloc[pos]
-            }
-        else:
-            val = df[metric].iloc[pos] - df[metric].iloc[pos-1]
-            row = {
-                'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
-                'end': df['end'].iloc[pos],
-                metric: val
-            }
-        rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-# Combine FCF metrics into one DataFrame
-def calculate_and_plot_fcf(ticker):
-    cfoa = get_cfoa_and_capex(ticker, 'NetCashProvidedByUsedInOperatingActivities')
-    capex = get_cfoa_and_capex(ticker, 'PaymentsToAcquirePropertyPlantAndEquipment')
-
-    # same dtypes
-    cfoa['end']  = pd.to_datetime(cfoa['end'])
-    capex['end'] = pd.to_datetime(capex['end'])
-
-    # ensure one row per period per DF
-    cfoa = cfoa.drop_duplicates(['fp','end'])
-    capex = capex.drop_duplicates(['fp','end'])
-
-    # sanity check (will raise if not one-to-one)
-    df = cfoa.merge(capex, on=['fp','end'], how='inner', validate='one_to_one')
-    df['FCF'] = df['NetCashProvidedByUsedInOperatingActivities'] - df['PaymentsToAcquirePropertyPlantAndEquipment']
-    df = df.drop(columns=['NetCashProvidedByUsedInOperatingActivities', 'PaymentsToAcquirePropertyPlantAndEquipment'])
-
-    blank_rows = []
-    for idx in range(len(df)):
-        blank_rows.append(df.iloc[idx])
-        if df.iloc[idx]['fp'] == 'Q4':
-            blank_series = pd.Series({col: None for col in df.columns})
-            blank_rows.append(blank_series)
-
-    df = pd.DataFrame(blank_rows, columns=df.columns)
-
-    ax = df.plot(x='fp', y='FCF', kind='bar', legend=False)
-
-    # Hide y-axis label text
-    ax.set_ylabel('')
-
-    # Show only years for Q4 bars
-    ticks = np.arange(len(df))
-    labels = []
-    for i, row in df.iterrows():
-        if row['end'].quarter == 4:
-            labels.append(str(row['end'].year))
-        else:
-            labels.append('')  # blank for non-Q4
-
-    ax.set_xticks(ticks)
-    ax.set_xticklabels(labels, rotation=0)
-
-    plt.title(f'Free cash flow ({ticker})')
-    plt.show()
-
-
-def fcf_forecast():
-    growth_timespan = int(input('Enter the growth timespan (in years): '))
-
-
-def spreadsheet(ticker):
-    sheet_name = 'Untitled spreadsheet'
-    credentials_file = '/home/mo-lester/Documents/6-7 Project/service-account.json'
-    
-    scopes = [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive'
-    ]
-    credentials = Credentials.from_service_account_file(credentials_file, scopes=scopes)
-    gc = gspread.authorize(credentials)
-
-    spreadsheet = gc.open(sheet_name)
-    worksheet = spreadsheet.sheet1
-
-    worksheet.clear()
-
-    pos = 1
-    for cell in wacc(ticker):
-        worksheet.update(f'A{pos}', [[cell]])
-        worksheet.update(f'B{pos}', [[wacc(ticker)[cell]]])
-        pos += 1
-
-    worksheet.spreadsheet.batch_update({
-        "requests": [
-            {
-                "autoResizeDimensions": {
-                    "dimensions": {
-                        "sheetId": worksheet.id,
-                        "dimension": "COLUMNS",
-                        "startIndex": 0,
-                        "endIndex": 1
-                    }
+    for key, value in metrics.items():
+        for metric in value:
+            rows = []
+            df = pd.DataFrame()
+            for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
+                start, end = pd.to_datetime([entry['start'], entry['end']])
+                duration = (end-start).days
+                row = {
+                    'start': entry['start'],
+                    'end': entry['end'],
+                    'filed': entry['filed'],
+                    'fp': entry['fp'],
+                    'duration': duration,
+                    key: entry['val']
                 }
-            }
-        ]
-    })
+                rows.append(row)
 
-    df = pd.DataFrame({
-        'Year': [2024, 2025, 2026],
-        'Revenue': [350018, 402521, 462899]
-    })
+            df = pd.DataFrame(rows)
 
-    worksheet.update('C1', [df.columns.values.tolist()] + df.values.tolist())
+            df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
+            df = df.sort_values('filed', ascending=False)
+            df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns=['start', 'filed'])
+
+            for idx in sorted(df.index, reverse=True):
+                if df.at[idx, 'duration'] < 95 and df.at[idx, 'fp'] != 'Q1':
+                    df.drop(index=idx, inplace=True)
+
+            # Adjust values: for Q1 keep as-is, for Q2–Q4 subtract previous quarter (all values are in YTD format)
+            rows = []
+            for pos in range(len(df)):
+                if df['fp'].iloc[pos] == 'Q1':
+                    row = {
+                        'fp': df['fp'].iloc[pos],
+                        'end': df['end'].iloc[pos],
+                        metric: df[metric].iloc[pos]
+                    }
+                else:
+                    val = df[metric].iloc[pos] - df[metric].iloc[pos-1]
+                    row = {
+                        'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
+                        'end': df['end'].iloc[pos],
+                        metric: val
+                    }
+                rows.append(row)
+
+            print(df.info())
+
+
 
 
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 
-    calculate_and_plot_fcf(ticker)
+    fcf(ticker)
 
 
 run()
