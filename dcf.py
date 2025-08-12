@@ -216,7 +216,7 @@ def get_and_plot_fcf(ticker):
 
     for metric in metrics:
         print(get_metrics_to_calculate_fcf(ticker, metric).info())
-
+        
 
 def fcf_forecast():
     growth_timespan = int(input('Enter the growth timespan (in years): '))
