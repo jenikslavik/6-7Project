@@ -84,11 +84,20 @@ def calculate_ttm_interest_expense(ticker):
     # Create a DataFrame of yearly (FY) entries
     df = pd.DataFrame(q4_rows)
 
+
+    #           start         end  fp        val       filed
+    #   0  2022-01-01  2022-12-31  FY  357000000  2025-02-05
+    #   1  2023-01-01  2023-09-30  Q3  239000000  2024-10-30
+    #   2  2023-01-01  2023-12-31  FY  308000000  2025-02-05
+    #   3  2024-01-01  2024-09-30  Q3  215000000  2024-10-30
+    #   4  2024-01-01  2024-12-31  FY  268000000  2025-02-05
+
+
     # Add a calculated Q4-only row
     rows.append({
-        'start': df['end'].iloc[-2],  # start = previous quarter's end
-        'end': df['end'].iloc[-1],    # end = FY end date
-        'fp': 'Q4',                   # label as Q4
+        'start': df['end'].iloc[-2],
+        'end': df['end'].iloc[-1],
+        'fp': 'Q4',
         'val': df[df['fp'] == 'FY']['val'].iloc[-1] - df[df['fp'] == 'Q3']['val'].iloc[-1],     # calculation: FY value minus Q3 YTD value
         'filed': df['filed'].iloc[-1]
     })
@@ -109,7 +118,7 @@ def wacc(ticker):
 
     market_cap = yf.Ticker(ticker).info.get('marketCap')  # Yahoo Finance market cap
 
-    # Debt metrics for calculating Book value of debt
+    # Names of Long-term debt and Operating liabilities in the SEC companyData JSON file
     needed_metrics = [
         'LongTermDebt',
         'OperatingLeaseLiabilityNoncurrent'
@@ -123,7 +132,7 @@ def wacc(ticker):
     # Risk-free rate from 10-year Treasury yield
     risk_free_rate = yf.Ticker('^TNX').history(period='1d')['Close'].iloc[-1] / 100
     beta = yf.Ticker(ticker).info.get('beta')  # Yahoo Finance beta
-    cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)  # CAPM formula
+    cost_of_equity = risk_free_rate + beta * (.1 - risk_free_rate)
 
     interest_expense = calculate_ttm_interest_expense(ticker)  # TTM interest expense
     cost_of_debt = interest_expense / sum(book_value_of_debt)  # pre-tax cost of debt
@@ -131,7 +140,7 @@ def wacc(ticker):
 
     # Return a dictionary of all metrics
     return {
-        'market_cap': int(market_cap / 1_000_000),  # millions
+        'market_cap': int(market_cap / 1_000_000),  # in millions
         'long_term_debt': book_value_of_debt[0] / 1_000_000,
         'operating_lease_liabilities': book_value_of_debt[1] / 1_000_000,
         'book_value_of_debt': sum(book_value_of_debt) / 1_000_000,
@@ -148,7 +157,7 @@ def wacc(ticker):
     }
 
 
-# -------- Build a DataFrame for each FCF metric --------
+# Build a clean DataFrame for NetCashFromOperations and CapitalExpenditures
 def get_metrics_to_calculate_fcf(ticker, metric):
     companyData = get_companyData(ticker)
 
@@ -161,12 +170,12 @@ def get_metrics_to_calculate_fcf(ticker, metric):
             'end': entry['end'],
             'fp': entry['fp'],
             'duration': int(duration),
-            'val': entry['val'] / 1_000_000,  # convert to millions
+            'val': entry['val'] / 1_000_000,
             'filed': entry['filed']
         }
         rows.append(row)
 
-    # Build DF, sort by filing date, drop duplicates, then sort by end date
+    # Build DataFrame, sort by filing date, drop duplicates, then sort by end date
     df = pd.DataFrame(rows)
     df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
     df = df.sort_values('filed', ascending=False)
@@ -174,10 +183,10 @@ def get_metrics_to_calculate_fcf(ticker, metric):
            .sort_values('end', ascending=True) \
            .drop(columns=['start', 'filed'])
 
-    # Rename 'val' to metric name for clarity
+    # Rename 'val' to metric name for later merging the two DFs together
     df = df.rename(columns={'val': metric})
 
-    # Adjust values: for Q1 keep as-is, for Q2–Q4 subtract previous quarter
+    # Adjust values: for Q1 keep as-is, for Q2–Q4 subtract previous quarter (all values are in YTD format)
     rows = []
     for pos in range(len(df)):
         if df['fp'].iloc[pos] == 'Q1':
@@ -198,7 +207,7 @@ def get_metrics_to_calculate_fcf(ticker, metric):
     return pd.DataFrame(rows)
 
 
-# -------- Combine FCF metrics into one DF --------
+# Combine FCF metrics into one DataFrame
 def get_and_plot_fcf(ticker):
     metrics = [
         'NetCashProvidedByUsedInOperatingActivities',
@@ -212,17 +221,14 @@ def get_and_plot_fcf(ticker):
     print(df)
 
 
-# -------- Placeholder for FCF forecast --------
 def fcf_forecast():
     growth_timespan = int(input('Enter the growth timespan (in years): '))
 
 
-# -------- Write WACC + forecast to Google Sheet --------
 def spreadsheet(ticker):
     sheet_name = 'Untitled spreadsheet'
     credentials_file = '/home/mo-lester/Documents/6-7 Project/service-account.json'
     
-    # Auth scopes for Sheets + Drive
     scopes = [
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
@@ -230,19 +236,17 @@ def spreadsheet(ticker):
     credentials = Credentials.from_service_account_file(credentials_file, scopes=scopes)
     gc = gspread.authorize(credentials)
 
-    spreadsheet = gc.open(sheet_name)     # open spreadsheet by name
-    worksheet = spreadsheet.sheet1        # first sheet
+    spreadsheet = gc.open(sheet_name)
+    worksheet = spreadsheet.sheet1
 
-    worksheet.clear()                     # wipe existing data
+    worksheet.clear()
 
-    # Write WACC dictionary to columns A and B
     pos = 1
     for cell in wacc(ticker):
         worksheet.update(f'A{pos}', [[cell]])
         worksheet.update(f'B{pos}', [[wacc(ticker)[cell]]])
         pos += 1
 
-    # Auto-resize column A
     worksheet.spreadsheet.batch_update({
         "requests": [
             {
@@ -258,19 +262,17 @@ def spreadsheet(ticker):
         ]
     })
 
-    # Example: small DataFrame of revenue forecast
     df = pd.DataFrame({
         'Year': [2024, 2025, 2026],
         'Revenue': [350018, 402521, 462899]
     })
 
-    # Write forecast starting at cell C1
     worksheet.update('C1', [df.columns.values.tolist()] + df.values.tolist())
 
 
-# -------- Main entry point --------
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
+
     get_and_plot_fcf(ticker)
 
 
