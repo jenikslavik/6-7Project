@@ -1,6 +1,7 @@
 import json # Handles reading/writing JSON files
 import requests # Makes HTTP requests to fetch data from APIs
 import pandas as pd # For working with tabular data
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import gspread # Google Sheets API client
@@ -229,11 +230,33 @@ def calculate_and_plot_fcf(ticker):
     # sanity check (will raise if not one-to-one)
     df = cfoa.merge(capex, on=['fp','end'], how='inner', validate='one_to_one')
     df['FCF'] = df['NetCashProvidedByUsedInOperatingActivities'] - df['PaymentsToAcquirePropertyPlantAndEquipment']
-    df = df.drop(columns=['NetCashProvidedByUsedInOperatingActivities', 'PaymentsToAcquirePropertyPlantAndEquipment', 'end'])
+    df = df.drop(columns=['NetCashProvidedByUsedInOperatingActivities', 'PaymentsToAcquirePropertyPlantAndEquipment'])
 
-    print(df)
+    blank_rows = []
+    for idx in range(len(df)):
+        blank_rows.append(df.iloc[idx])
+        if df.iloc[idx]['fp'] == 'Q4':
+            blank_series = pd.Series({col: None for col in df.columns})
+            blank_rows.append(blank_series)
 
-    df.plot(x='fp', y='FCF', kind='bar')
+    df = pd.DataFrame(blank_rows, columns=df.columns)
+
+    ax = df.plot(x='fp', y='FCF', kind='bar', legend=False)
+
+    # Hide y-axis label text
+    ax.set_ylabel('')
+
+    # Show only years for Q4 bars
+    ticks = np.arange(len(df))
+    labels = []
+    for i, row in df.iterrows():
+        if row['end'].quarter == 4:
+            labels.append(str(row['end'].year))
+        else:
+            labels.append('')  # blank for non-Q4
+
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=0)
 
     plt.title(f'Free cash flow ({ticker})')
     plt.show()
