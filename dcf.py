@@ -1,6 +1,8 @@
 import json # Handles reading/writing JSON files
 import requests # Makes HTTP requests to fetch data from APIs
 import pandas as pd # For working with tabular data
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import gspread # Google Sheets API client
 import yfinance as yf # Yahoo Finance API client
 from google.oauth2.service_account import Credentials # Auth for Google APIs
@@ -226,8 +228,15 @@ def calculate_and_plot_fcf(ticker):
 
     # sanity check (will raise if not one-to-one)
     df = cfoa.merge(capex, on=['fp','end'], how='inner', validate='one_to_one')
+    df['FCF'] = df['NetCashProvidedByUsedInOperatingActivities'] - df['PaymentsToAcquirePropertyPlantAndEquipment']
+    df = df.drop(columns=['NetCashProvidedByUsedInOperatingActivities', 'PaymentsToAcquirePropertyPlantAndEquipment', 'end'])
 
     print(df)
+
+    df.plot(x='fp', y='FCF', kind='bar')
+
+    plt.title(f'Free cash flow ({ticker})')
+    plt.show()
 
 
 def fcf_forecast():
