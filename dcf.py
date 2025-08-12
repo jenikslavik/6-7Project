@@ -11,7 +11,6 @@ def get_companyData(ticker):
     with open('/home/mo-lester/Documents/6-7 Project/company_tickers.json', 'r') as f:
         data = json.load(f)
 
-
     for v in data.values():
         if v['ticker'] == ticker:
             cik = str(v['cik_str']).zfill(10)
@@ -22,14 +21,12 @@ def get_companyData(ticker):
     ).json()
 
 
-
-
 def calculate_ttm_interest_expense(ticker):
     companyData = get_companyData(ticker)
 
+
     rows = []
     q4_rows = []
-
 
     for entry in companyData['facts']['us-gaap']['InterestExpenseNonoperating']['units']['USD']:
         start, end = pd.to_datetime([entry['start'], entry['end']])
@@ -134,6 +131,7 @@ def fcf(ticker):
         for metric in value:
             rows = []
             df = pd.DataFrame()
+            metric = 'NetCashProvidedByUsedInOperatingActivities'
             for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
                 start, end = pd.to_datetime([entry['start'], entry['end']])
                 duration = (end-start).days
@@ -164,18 +162,18 @@ def fcf(ticker):
                     row = {
                         'fp': df['fp'].iloc[pos],
                         'end': df['end'].iloc[pos],
-                        metric: df[metric].iloc[pos]
+                        key: df[key].iloc[pos]
                     }
                 else:
-                    val = df[metric].iloc[pos] - df[metric].iloc[pos-1]
+                    val = df[key].iloc[pos] - df[key].iloc[pos-1]
                     row = {
                         'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
                         'end': df['end'].iloc[pos],
-                        metric: val
+                        key: val
                     }
                 rows.append(row)
 
-            print(df.info())
+            return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
 
