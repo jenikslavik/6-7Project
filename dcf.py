@@ -158,7 +158,7 @@ def wacc(ticker):
 
 
 # Build a clean DataFrame for NetCashFromOperations and CapitalExpenditures
-def get_metrics_to_calculate_fcf(ticker, metric):
+def get_cfoa_and_capex(ticker, metric):
     companyData = get_companyData(ticker)
 
     rows = []
@@ -182,6 +182,10 @@ def get_metrics_to_calculate_fcf(ticker, metric):
     df = df.drop_duplicates(['start', 'end'], keep='first') \
            .sort_values('end', ascending=True) \
            .drop(columns=['start', 'filed'])
+
+    for idx in sorted(df.index, reverse=True):
+        if df.at[idx, 'duration'] < 95 and df.at[idx, 'fp'] != 'Q1':
+            df.drop(index=idx, inplace=True)
 
     # Rename 'val' to metric name for later merging the two DFs together
     df = df.rename(columns={'val': metric})
@@ -208,15 +212,23 @@ def get_metrics_to_calculate_fcf(ticker, metric):
 
 
 # Combine FCF metrics into one DataFrame
-def get_and_plot_fcf(ticker):
-    metrics = [
-        'NetCashProvidedByUsedInOperatingActivities',
-        'PaymentsToAcquirePropertyPlantAndEquipment'
-    ]
+def calculate_and_plot_fcf(ticker):
+    cfoa = get_cfoa_and_capex(ticker, 'NetCashProvidedByUsedInOperatingActivities')
+    capex = get_cfoa_and_capex(ticker, 'PaymentsToAcquirePropertyPlantAndEquipment')
 
-    for metric in metrics:
-        print(get_metrics_to_calculate_fcf(ticker, metric).info())
-        
+    # same dtypes
+    cfoa['end']  = pd.to_datetime(cfoa['end'])
+    capex['end'] = pd.to_datetime(capex['end'])
+
+    # ensure one row per period per DF
+    cfoa = cfoa.drop_duplicates(['fp','end'])
+    capex = capex.drop_duplicates(['fp','end'])
+
+    # sanity check (will raise if not one-to-one)
+    df = cfoa.merge(capex, on=['fp','end'], how='inner', validate='one_to_one')
+
+    print(df)
+
 
 def fcf_forecast():
     growth_timespan = int(input('Enter the growth timespan (in years): '))
@@ -270,7 +282,7 @@ def spreadsheet(ticker):
 def run():
     ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 
-    get_and_plot_fcf(ticker)
+    calculate_and_plot_fcf(ticker)
 
 
 run()
