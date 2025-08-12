@@ -74,8 +74,6 @@ def ttm_interest_expense(ticker):
     return df['val'].iloc[-4:].sum()
 
 
-
-
 def wacc(ticker):
     companyData = get_companyData(ticker)
 
@@ -119,6 +117,22 @@ def wacc(ticker):
 
 
 
+def assign_quarter(row):
+    month = row['end'].month
+    year = row['end'].year
+
+    if month in [1, 2, 3]:
+        quarter = 'Q1'
+    elif month in [4, 5, 6]:
+        quarter = 'Q2'
+    elif month in [7, 8, 9]:
+        quarter = 'Q3'
+    else:
+        quarter = 'Q4'
+
+    return f"{quarter} {year}"
+
+
 def fcf(ticker):
     companyData = get_companyData(ticker)
 
@@ -131,7 +145,7 @@ def fcf(ticker):
         for metric in value:
             rows = []
             df = pd.DataFrame()
-            metric = 'PaymentsToAcquirePropertyPlantAndEquipment'
+            metric = 'NetCashProvidedByUsedInOperatingActivities'
             for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
                 start, end = pd.to_datetime([entry['start'], entry['end']])
                 duration = (end-start).days
@@ -151,8 +165,6 @@ def fcf(ticker):
             df = df.sort_values('filed', ascending=False)
             df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns='filed')
 
-            return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
-
             for idx in sorted(df.index, reverse=True):
                 if df.at[idx, 'duration'] < 95 and df.at[idx, 'fp'] != 'Q1':
                     df.drop(index=idx, inplace=True)
@@ -160,32 +172,36 @@ def fcf(ticker):
             # Adjust values: for Q1 keep as-is, for Q2–Q4 subtract previous quarter (all values are in YTD format)
             rows = []
             for pos in range(len(df)):
-                if df['fp'].iloc[pos] == 'Q1':
-                    row = {
-                        'end': df['end'].iloc[pos],
-                        'fp': df['fp'].iloc[pos],
-                        key: df[key].iloc[pos]
-                    }
+                duration = (pd.to_datetime(df['end'].iloc[pos]) - pd.to_datetime(df['end'].iloc[pos-1])).days
+                if 85 < duration < 95:
+                    if df['fp'].iloc[pos] == 'Q1':
+                        row = {
+                            'end': df['end'].iloc[pos],
+                            'fp': df['fp'].iloc[pos],
+                            'duration': duration,
+                            key: df[key].iloc[pos]
+                        }
+                    else:
+                        val = df[key].iloc[pos] - df[key].iloc[pos-1]
+                        row = {
+                            'end': df['end'].iloc[pos],
+                            'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
+                            'duration': duration,
+                            key: val
+                        }
+                    rows.append(row)
                 else:
-                    val = df[key].iloc[pos] - df[key].iloc[pos-1]
-                    row = {
-                        'end': df['end'].iloc[pos],
-                        'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
-                        key: val
-                    }
-                rows.append(row)
+                    continue
 
             df = pd.DataFrame(rows)
             
+            df['end'] = pd.to_datetime(df['end'])
+            df['quarter'] = df.apply(assign_quarter, axis=1)
+
             return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
 
 
-def run():
-    ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
-
-    fcf(ticker)
-
-
-run()
+ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
+fcf(ticker)
