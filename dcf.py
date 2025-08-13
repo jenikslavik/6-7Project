@@ -141,6 +141,14 @@ def fcf(ticker):
         'capex': ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets']
     }
 
+def fcf(ticker):
+    companyData = get_companyData(ticker)
+
+    metrics = {
+        'cfoa': ['NetCashProvidedByUsedInOperatingActivities'],
+        'capex': ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets']
+    }
+
     for key, value in metrics.items():
         for metric in value:
             rows = []
@@ -201,7 +209,7 @@ def fcf(ticker):
             merged_df = calendar_df.merge(df, on='quarter', how='left')
 
             return merged_df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
-
+    
 
 
 
