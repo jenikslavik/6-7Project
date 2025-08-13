@@ -139,112 +139,155 @@ def quarter_to_date(quarter_str):
     return pd.Timestamp(year=int(year), month=month, day=1)
 
 
-def fcf(ticker):
-    companyData = get_companyData(ticker)
-    combined_df = None
-    min_end = None
-    max_end = None
+# --- Add/replace below ---
 
-    metrics = {
-        'cfoa': ['NetCashProvidedByUsedInOperatingActivities'],
-        'capex': ['PaymentsToAcquirePropertyPlantAndEquipment',
-                  'PaymentsToAcquireProductiveAssets']
-    }
+CANDIDATES = {
+    "cfoa": [
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+        "CashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesDomesticOperations",
+    ],
+    "capex": [
+        # Common
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsForPropertyPlantAndEquipment",
+        # Variants seen in older/newer taxonomies
+        "PaymentsToAcquireProductiveAssets",
+        "CapitalExpenditures",
+        "PurchaseOfPropertyAndEquipment",
+        "AcquisitionOfPropertyPlantAndEquipment",
+        "PaymentsToAcquireFixedAssets",
+        "PaymentsForCapitalExpenditures",
+        # Some companies bundle PP&E + intangibles; we still prefer coverage
+        "CapitalExpendituresFixedAssetsIntangibleAssets",
+    ],
+}
 
-    for key, value in metrics.items():
-        metric_df = None
+def _concept_exists(companyData, concept):
+    try:
+        return "USD" in companyData["facts"]["us-gaap"][concept]["units"]
+    except KeyError:
+        return False
 
-        for metric in value:
-            rows = []
-            for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
-                start, end = pd.to_datetime([entry['start'], entry['end']])
-                duration = (end - start).days
-                rows.append({
-                    'start': entry['start'],
-                    'end': entry['end'],
-                    'filed': entry['filed'],
-                    'fp': entry['fp'],
-                    'duration': duration,
-                    key: entry['val']
-                })
+def _quarterize_series(companyData, concept, colname):
+    """Return DataFrame: ['quarter', colname], true quarterly, deduped & sorted."""
+    rows = []
+    for entry in companyData["facts"]["us-gaap"][concept]["units"]["USD"]:
+        start, end = pd.to_datetime([entry["start"], entry["end"]])
+        duration = (end - start).days
+        rows.append({
+            "start": start, "end": end, "filed": pd.to_datetime(entry.get("filed", end)),
+            "fp": entry.get("fp", ""), "duration": duration, colname: entry["val"]
+        })
 
-            df = pd.DataFrame(rows)
-            df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
-            df = df.sort_values('filed', ascending=False)
-            df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns='filed')
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return pd.DataFrame(columns=["quarter", colname])
 
-            # Remove partial quarters except Q1
-            for idx in sorted(df.index, reverse=True):
-                if df.at[idx, 'duration'] < 95 and df.at[idx, 'fp'] != 'Q1':
-                    df.drop(index=idx, inplace=True)
-
-            # Convert YTD to quarterly
-            adj_rows = []
-            for pos in range(len(df)):
-                duration = (pd.to_datetime(df['end'].iloc[pos]) - pd.to_datetime(df['end'].iloc[pos-1])).days
-                if 85 < duration < 95:
-                    if df['fp'].iloc[pos] == 'Q1':
-                        adj_rows.append({'end': df['end'].iloc[pos], key: df[key].iloc[pos]})
-                    else:
-                        adj_rows.append({'end': df['end'].iloc[pos], key: df[key].iloc[pos] - df[key].iloc[pos-1]})
-
-            df = pd.DataFrame(adj_rows)
-            df['end'] = pd.to_datetime(df['end'])
-            df['quarter'] = df.apply(assign_quarter, axis=1)
-
-            # Track date range for calendar
-            if min_end is None or df['end'].min() < min_end:
-                min_end = df['end'].min()
-            if max_end is None or df['end'].max() > max_end:
-                max_end = df['end'].max()
-
-            df = df.drop(columns='end')
-
-            if metric_df is None:
-                metric_df = df
-            else:
-                # Sum duplicate quarters for this key
-                metric_df = pd.concat([metric_df, df]).groupby('quarter', as_index=False).sum()
-
-        # Merge with main combined_df
-        if combined_df is None:
-            combined_df = metric_df
-        else:
-            combined_df = combined_df.merge(metric_df, on='quarter', how='outer')
-
-    # Build full quarter calendar
-    quarters = pd.date_range(start=min_end, end=max_end, freq='QE')
-    quarter_year = [f'Q{d.quarter} {d.year}' for d in quarters]
-    calendar_df = pd.DataFrame({'quarter': quarter_year})
-
-    # Merge to ensure all quarters present
-    combined_df = calendar_df.merge(combined_df, on='quarter', how='left')
-
-    # Final chronological sort
-    tmp = combined_df['quarter'].str.extract(r'Q(?P<q>\d)\s+(?P<year>\d{4})').astype(int)
-    combined_df = (
-        combined_df
-        .assign(year=tmp['year'], qnum=tmp['q'])
-        .sort_values(['year', 'qnum'])
-        .drop(columns=['year', 'qnum'])
-        .reset_index(drop=True)
+    # Keep first file for a given period, sort chronologically
+    df = (
+        df.sort_values("filed")
+          .drop_duplicates(["start", "end"], keep="first")
+          .sort_values("end")
     )
 
-    # make sure the names exist and create FCF
-    assert {'cfoa', 'capex'}.issubset(combined_df.columns), combined_df.columns
-    combined_df['fcf'] = combined_df['cfoa'].fillna(0) - combined_df['capex'].fillna(0)
+    # Remove partial quarters (keep legit Q1 if filer uses odd YTD)
+    # Your rule: drop <95d unless Q1 — keep it
+    mask_keep = ~((df["duration"] < 95) & (df["fp"] != "Q1"))
+    df = df[mask_keep].reset_index(drop=True)
 
-    # build the exact frame you’ll plot
-    plot_df = combined_df[['quarter', 'fcf']].copy()
+    # Convert YTD to quarterly deltas
+    out = []
+    for i in range(len(df)):
+        if i == 0 or (df.iloc[i]["end"] - df.iloc[i-1]["end"]).days < 85:
+            continue  # skip anomalous first/close points
+        if df.iloc[i]["fp"] == "Q1":
+            q_val = df.iloc[i][colname]
+        else:
+            q_val = df.iloc[i][colname] - df.iloc[i-1][colname]
+        out.append({"end": df.iloc[i]["end"], colname: q_val})
 
-    ax = plot_df.plot(x='quarter', y='fcf', kind='bar')
+    dfq = pd.DataFrame(out)
+    if dfq.empty:
+        return pd.DataFrame(columns=["quarter", colname])
 
-    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
-    labels = [label.get_text() if "Q4" in label.get_text() else "" 
-              for label in ax.get_xticklabels()]
+    dfq["quarter"] = dfq.apply(assign_quarter, axis=1)
+    return dfq[["quarter", colname]]
+
+def _stitch_first_non_null(dflist, colname):
+    """Merge multiple quarterly series into one by taking first non-null by priority."""
+    if not dflist:
+        return pd.DataFrame(columns=["quarter", colname])
+
+    # Order by coverage (more data first)
+    dflist = sorted(dflist, key=lambda d: d[colname].notna().sum(), reverse=True)
+
+    merged = dflist[0].copy()
+    for nxt in dflist[1:]:
+        merged = merged.merge(nxt, on="quarter", how="outer", suffixes=("", "_alt"))
+        # choose first non-null among [colname, colname_alt]
+        merged[colname] = merged[colname].combine_first(merged[f"{colname}_alt"])
+        merged.drop(columns=[c for c in merged.columns if c.endswith("_alt")], inplace=True)
+
+    # Keep unique, sorted by real time
+    tmp = merged["quarter"].str.extract(r"Q(?P<q>\d)\s+(?P<y>\d{4})").astype(int)
+    return (merged.assign(_y=tmp["y"], _q=tmp["q"])
+                  .sort_values(["_y","_q"])
+                  .drop(columns=["_y","_q"])
+                  .reset_index(drop=True))
+
+def _normalize_capex_sign(series):
+    """Return CapEx as positive cash outflow."""
+    if series.dropna().median() < 0:
+        return -series  # make it positive spend
+    return series
+
+def fcf(ticker):
+    companyData = get_companyData(ticker)
+
+    # Build CFOA
+    cfo_candidates = [c for c in CANDIDATES["cfoa"] if _concept_exists(companyData, c)]
+    cfo_series = [_quarterize_series(companyData, c, "cfoa") for c in cfo_candidates]
+    cfoa = _stitch_first_non_null([df for df in cfo_series if not df.empty], "cfoa")
+
+    # Build CapEx
+    capex_candidates = [c for c in CANDIDATES["capex"] if _concept_exists(companyData, c)]
+    capex_series = [_quarterize_series(companyData, c, "capex") for c in capex_candidates]
+    capex = _stitch_first_non_null([df for df in capex_series if not df.empty], "capex")
+
+    # Make a full quarter calendar spanning both series
+    if cfoa.empty and capex.empty:
+        raise ValueError("No CFOA or CapEx data found for this filer.")
+
+    frames = [d for d in [cfoa, capex] if not d.empty]
+    allq = pd.concat(frames)["quarter"].unique().tolist()
+    tmp = pd.DataFrame({"quarter": allq})
+    tmp2 = tmp["quarter"].str.extract(r"Q(?P<q>\d)\s+(?P<y>\d{4})").astype(int)
+    calendar = (tmp.assign(_y=tmp2["y"], _q=tmp2["q"])
+                    .sort_values(["_y","_q"])
+                    .drop(columns=["_y","_q"])
+                    .reset_index(drop=True))
+
+    # Merge & compute FCF
+    combined = (calendar
+                .merge(cfoa, on="quarter", how="left")
+                .merge(capex, on="quarter", how="left"))
+
+    # Normalize CapEx sign to positive spend
+    combined["capex"] = _normalize_capex_sign(combined["capex"])
+
+    combined["fcf"] = combined["cfoa"].fillna(0) - combined["capex"].fillna(0)
+
+    # (Optional) plot, keeping your quarterly-label rule
+    plot_df = combined[["quarter", "fcf"]].copy()
+    ax = plot_df.plot(x="quarter", y="fcf", kind="bar")
+    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e9:.0f}B'))
+    labels = [t.get_text() if "Q4" in t.get_text() else "" for t in ax.get_xticklabels()]
     ax.set_xticklabels(labels)
-
     plt.show()
+
+    return combined
 
 
 
