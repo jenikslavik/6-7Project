@@ -133,13 +133,11 @@ def assign_quarter(row):
     return f"{quarter} {year}"
 
 
-def fcf(ticker):
-    companyData = get_companyData(ticker)
+def quarter_to_date(quarter_str):
+    q, year = quarter_str.split()
+    month = {"Q1": 3, "Q2": 6, "Q3": 9, "Q4": 12}[q]  # use end month of quarter
+    return pd.Timestamp(year=int(year), month=month, day=1)
 
-    metrics = {
-        'cfoa': ['NetCashProvidedByUsedInOperatingActivities'],
-        'capex': ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets']
-    }
 
 def fcf(ticker):
     companyData = get_companyData(ticker)
@@ -148,6 +146,8 @@ def fcf(ticker):
         'cfoa': ['NetCashProvidedByUsedInOperatingActivities'],
         'capex': ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets']
     }
+
+    combined_df = None
 
     for key, value in metrics.items():
         for metric in value:
@@ -167,7 +167,6 @@ def fcf(ticker):
                 rows.append(row)
 
             df = pd.DataFrame(rows)
-
             df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
             df = df.sort_values('filed', ascending=False)
             df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns='filed')
@@ -203,13 +202,30 @@ def fcf(ticker):
 
             quarters = pd.date_range(start=df['end'].iloc[0], end=df['end'].iloc[-1], freq='QE')
             quarter_year = [f'Q{d.quarter} {d.year}' for d in quarters]            
-            calendar_df = pd.DataFrame({'quarter': quarter_year})
+            calendar_df = pd.DataFrame({
+                'quarter': quarter_year,
+            })
 
             df = df.drop(columns='end')
+
             merged_df = calendar_df.merge(df, on='quarter', how='left')
 
-            return merged_df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
-    
+            tmp = merged_df['quarter'].str.extract(r'Q(?P<q>\d)\s+(?P<year>\d{4})').astype(int)
+            merged_df = (
+                merged_df
+                .assign(year=tmp['year'], qnum=tmp['q'])
+                .sort_values(['year', 'qnum'])
+                .drop(columns=['year', 'qnum'])
+                .reset_index(drop=True)
+            )
+
+            if combined_df is None:
+                combined_df = merged_df
+            else:
+                combined_df = combined_df.merge(merged_df, on='quarter', how='outer')
+
+    print(combined_df)
+
 
 
 
