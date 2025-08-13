@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
+import matplotlib.ticker as mtick
 import yfinance as yf
 
 
@@ -141,90 +141,110 @@ def quarter_to_date(quarter_str):
 
 def fcf(ticker):
     companyData = get_companyData(ticker)
+    combined_df = None
+    min_end = None
+    max_end = None
 
     metrics = {
         'cfoa': ['NetCashProvidedByUsedInOperatingActivities'],
-        'capex': ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets']
+        'capex': ['PaymentsToAcquirePropertyPlantAndEquipment',
+                  'PaymentsToAcquireProductiveAssets']
     }
 
-    combined_df = None
-
     for key, value in metrics.items():
+        metric_df = None
+
         for metric in value:
             rows = []
-            df = pd.DataFrame()
             for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
                 start, end = pd.to_datetime([entry['start'], entry['end']])
-                duration = (end-start).days
-                row = {
+                duration = (end - start).days
+                rows.append({
                     'start': entry['start'],
                     'end': entry['end'],
                     'filed': entry['filed'],
                     'fp': entry['fp'],
                     'duration': duration,
                     key: entry['val']
-                }
-                rows.append(row)
+                })
 
             df = pd.DataFrame(rows)
             df['filed'] = pd.to_datetime(df.get('filed', df.get('end')))
             df = df.sort_values('filed', ascending=False)
             df = df.drop_duplicates(['start', 'end'], keep='first').sort_values('end', ascending=True).drop(columns='filed')
 
+            # Remove partial quarters except Q1
             for idx in sorted(df.index, reverse=True):
                 if df.at[idx, 'duration'] < 95 and df.at[idx, 'fp'] != 'Q1':
                     df.drop(index=idx, inplace=True)
 
-            # Adjust values: for Q1 keep as-is, for Q2–Q4 subtract previous quarter (all values are in YTD format)
-            rows = []
+            # Convert YTD to quarterly
+            adj_rows = []
             for pos in range(len(df)):
                 duration = (pd.to_datetime(df['end'].iloc[pos]) - pd.to_datetime(df['end'].iloc[pos-1])).days
                 if 85 < duration < 95:
                     if df['fp'].iloc[pos] == 'Q1':
-                        row = {
-                            'end': df['end'].iloc[pos],
-                            key: df[key].iloc[pos]
-                        }
+                        adj_rows.append({'end': df['end'].iloc[pos], key: df[key].iloc[pos]})
                     else:
-                        val = df[key].iloc[pos] - df[key].iloc[pos-1]
-                        row = {
-                            'end': df['end'].iloc[pos],
-                            key: val
-                        }
-                    rows.append(row)
-                else:
-                    continue
+                        adj_rows.append({'end': df['end'].iloc[pos], key: df[key].iloc[pos] - df[key].iloc[pos-1]})
 
-            df = pd.DataFrame(rows)
-            
+            df = pd.DataFrame(adj_rows)
             df['end'] = pd.to_datetime(df['end'])
             df['quarter'] = df.apply(assign_quarter, axis=1)
 
-            quarters = pd.date_range(start=df['end'].iloc[0], end=df['end'].iloc[-1], freq='QE')
-            quarter_year = [f'Q{d.quarter} {d.year}' for d in quarters]            
-            calendar_df = pd.DataFrame({
-                'quarter': quarter_year,
-            })
+            # Track date range for calendar
+            if min_end is None or df['end'].min() < min_end:
+                min_end = df['end'].min()
+            if max_end is None or df['end'].max() > max_end:
+                max_end = df['end'].max()
 
             df = df.drop(columns='end')
 
-            merged_df = calendar_df.merge(df, on='quarter', how='left')
-
-            tmp = merged_df['quarter'].str.extract(r'Q(?P<q>\d)\s+(?P<year>\d{4})').astype(int)
-            merged_df = (
-                merged_df
-                .assign(year=tmp['year'], qnum=tmp['q'])
-                .sort_values(['year', 'qnum'])
-                .drop(columns=['year', 'qnum'])
-                .reset_index(drop=True)
-            )
-
-            if combined_df is None:
-                combined_df = merged_df
+            if metric_df is None:
+                metric_df = df
             else:
-                combined_df = combined_df.merge(merged_df, on='quarter', how='outer')
+                # Sum duplicate quarters for this key
+                metric_df = pd.concat([metric_df, df]).groupby('quarter', as_index=False).sum()
 
-    print(combined_df)
+        # Merge with main combined_df
+        if combined_df is None:
+            combined_df = metric_df
+        else:
+            combined_df = combined_df.merge(metric_df, on='quarter', how='outer')
+
+    # Build full quarter calendar
+    quarters = pd.date_range(start=min_end, end=max_end, freq='QE')
+    quarter_year = [f'Q{d.quarter} {d.year}' for d in quarters]
+    calendar_df = pd.DataFrame({'quarter': quarter_year})
+
+    # Merge to ensure all quarters present
+    combined_df = calendar_df.merge(combined_df, on='quarter', how='left')
+
+    # Final chronological sort
+    tmp = combined_df['quarter'].str.extract(r'Q(?P<q>\d)\s+(?P<year>\d{4})').astype(int)
+    combined_df = (
+        combined_df
+        .assign(year=tmp['year'], qnum=tmp['q'])
+        .sort_values(['year', 'qnum'])
+        .drop(columns=['year', 'qnum'])
+        .reset_index(drop=True)
+    )
+
+    # make sure the names exist and create FCF
+    assert {'cfoa', 'capex'}.issubset(combined_df.columns), combined_df.columns
+    combined_df['fcf'] = combined_df['cfoa'].fillna(0) - combined_df['capex'].fillna(0)
+
+    # build the exact frame you’ll plot
+    plot_df = combined_df[['quarter', 'fcf']].copy()
+
+    ax = plot_df.plot(x='quarter', y='fcf', kind='bar')
+
+    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
+    labels = [label.get_text() if "Q4" in label.get_text() else "" 
+              for label in ax.get_xticklabels()]
+    ax.set_xticklabels(labels)
+
+    plt.show()
 
 
 
