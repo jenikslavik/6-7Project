@@ -145,7 +145,6 @@ def fcf(ticker):
         for metric in value:
             rows = []
             df = pd.DataFrame()
-            metric = 'NetCashProvidedByUsedInOperatingActivities'
             for entry in companyData['facts']['us-gaap'][metric]['units']['USD']:
                 start, end = pd.to_datetime([entry['start'], entry['end']])
                 duration = (end-start).days
@@ -177,16 +176,12 @@ def fcf(ticker):
                     if df['fp'].iloc[pos] == 'Q1':
                         row = {
                             'end': df['end'].iloc[pos],
-                            'fp': df['fp'].iloc[pos],
-                            'duration': duration,
                             key: df[key].iloc[pos]
                         }
                     else:
                         val = df[key].iloc[pos] - df[key].iloc[pos-1]
                         row = {
                             'end': df['end'].iloc[pos],
-                            'fp': 'Q4' if df['fp'].iloc[pos] == 'FY' else df['fp'].iloc[pos],
-                            'duration': duration,
                             key: val
                         }
                     rows.append(row)
@@ -198,7 +193,14 @@ def fcf(ticker):
             df['end'] = pd.to_datetime(df['end'])
             df['quarter'] = df.apply(assign_quarter, axis=1)
 
-            return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
+            quarters = pd.date_range(start=df['end'].iloc[0], end=df['end'].iloc[-1], freq='QE')
+            quarter_year = [f'Q{d.quarter} {d.year}' for d in quarters]            
+            calendar_df = pd.DataFrame({'quarter': quarter_year})
+
+            df = df.drop(columns='end')
+            merged_df = calendar_df.merge(df, on='quarter', how='left')
+
+            return merged_df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
 
