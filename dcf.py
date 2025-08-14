@@ -302,7 +302,7 @@ def fcf(ticker):
 
     # Decide y-axis scale: billions if >5B, else millions
     y_max = plot_df["fcf"].abs().max()
-    if y_max < 5e9:
+    if y_max < 2e9:
         ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
     else:
         ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e9:.0f}B'))

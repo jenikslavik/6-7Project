@@ -149,25 +149,25 @@ def build_quarterly_income(ticker: str) -> pd.DataFrame:
     return combined
 
 
-# ---------- Plotting (same style as dcf.py) ----------
+# ---------- Plotting (same style as dcf.py, but KEEP blank quarters) ----------
 def plot_metric(df: pd.DataFrame, ticker: str, metric: str):
     if metric not in ("gross_profit", "operating_income", "net_income"):
         raise ValueError("metric must be one of: gross_profit, operating_income, net_income")
 
-    plot_df = df[["quarter", metric]].dropna().copy()
-    if plot_df.empty:
-        raise ValueError(f"No data to plot for metric '{metric}'.")
+    # KEEP NaNs so blank quarters show up as empty slots (like in dcf.py)
+    plot_df = df[["quarter", metric]].copy()
 
     ax = plot_df.plot(x="quarter", y=metric, kind="bar")
 
-    # Millions if < 5B, else Billions (mirrors your FCF chart behavior). :contentReference[oaicite:1]{index=1}
-    y_max = plot_df[metric].abs().max()
-    if y_max < 5e9:
+    # Decide y-axis scale: millions if under ~2B, else billions (robust to NaNs)
+    values = plot_df[metric].to_numpy(dtype=float)
+    y_max = np.nanmax(np.abs(values)) if values.size else 0.0
+    if y_max < 2e9:
         ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
     else:
         ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e9:.0f}B'))
 
-    # Build centered year ticks for complete years + vertical guides after Q4. :contentReference[oaicite:2]{index=2}
+    # Build centered year ticks for COMPLETE years and vertical guides after each Q4
     year_to_idxs, q4_positions = {}, []
     for i, q in enumerate(plot_df["quarter"]):
         qtr, yr = q.split(); yr = int(yr)
@@ -176,7 +176,7 @@ def plot_metric(df: pd.DataFrame, ticker: str, metric: str):
 
     mid_ticks, mid_labels = [], []
     for yr, idxs in sorted(year_to_idxs.items()):
-        if len(idxs) == 4:  # only full years
+        if len(idxs) == 4:  # label only full years
             left, right = min(idxs), max(idxs)
             mid = (left + right) / 2.0
             mid_ticks.append(mid)
