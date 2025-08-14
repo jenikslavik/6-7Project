@@ -300,36 +300,44 @@ def fcf(ticker):
     plot_df = combined[["quarter", "fcf"]].copy()
     ax = plot_df.plot(x="quarter", y="fcf", kind="bar")
 
-    # Format y-axis as billions
-    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
+    # Decide y-axis scale: billions if >5B, else millions
+    y_max = plot_df["fcf"].abs().max()
+    if y_max < 5e9:
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
+    else:
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e9:.0f}B'))
 
-    # Build label positions: year in the middle of each year (between Q2 & Q3)
-    labels = [""] * len(plot_df)
+    # Collect indices per year and Q4 positions
+    year_to_idxs = {}
     q4_positions = []
-    year_positions = {}
     for i, q in enumerate(plot_df["quarter"]):
         qtr, yr = q.split()
         yr = int(yr)
-        if yr not in year_positions:
-            year_positions[yr] = []
-        year_positions[yr].append(i)
+        year_to_idxs.setdefault(yr, []).append(i)
         if qtr == "Q4":
             q4_positions.append(i)
 
-    for yr, idxs in year_positions.items():
-        mid_pos = idxs[len(idxs) // 2]  # middle quarter index
-        labels[mid_pos] = f"{yr % 100:02d}\u2019"  # two-digit + apostrophe
+    # Midpoint tick for each COMPLETE year (center between Q2 & Q3)
+    mid_ticks, mid_labels = [], []
+    for yr, idxs in sorted(year_to_idxs.items()):
+        if len(idxs) == 4:  # only label full years
+            left, right = min(idxs), max(idxs)
+            mid = (left + right) / 2.0
+            mid_ticks.append(mid)
+            mid_labels.append(f"{yr % 100:02d}")  # two-digit year, no apostrophe
 
-    # Apply labels horizontally
-    ax.set_xticklabels(labels, rotation=0, ha='center')
+    # Replace default bar ticks with our centered year ticks; remove tick marks
+    ax.set_xticks(mid_ticks)
+    ax.set_xticklabels(mid_labels, rotation=0, ha='center')
+    ax.tick_params(axis='x', which='both', length=0)  # hide short tick marks
 
-    # Gridlines behind bars
+    # Grid/lines behind bars
     ax.set_axisbelow(True)
 
     # Horizontal dashed gridlines (y-axis)
     ax.yaxis.grid(True, which='major', linestyle='--', linewidth=0.8, color='lightgray')
 
-    # Vertical dashed line after each Q4 bar
+    # Vertical dashed guides after each Q4
     for pos in q4_positions:
         ax.axvline(pos + 0.5, color='lightgray', linestyle='--', linewidth=0.8, zorder=0)
 
@@ -337,7 +345,7 @@ def fcf(ticker):
     plt.tight_layout()
     plt.show()
 
-    return combined.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
+    # return combined.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
 
