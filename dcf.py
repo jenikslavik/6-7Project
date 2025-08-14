@@ -294,7 +294,7 @@ def fcf(ticker):
     )
 
     # ----- Save CSV -----
-    combined.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
+    combined.to_csv('/home/mo-lester/Documents/6-7 Project/fcf_output.csv', index=False)
 
     # ----- Plot -----
     plot_df = combined[["quarter", "fcf"]].copy()
@@ -345,13 +345,13 @@ def fcf(ticker):
     plt.tight_layout()
     plt.show()
 
-    # return combined.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
+    # return combined.to_csv('/home/mo-lester/Documents/6-7 Project/fcf_output.csv', index=False)
 
 
 
 
 def spreadsheet():
-    csv_file = '/home/mo-lester/Documents/6-7 Project/output.csv'
+    csv_file = '/home/mo-lester/Documents/6-7 Project/fcf_output.csv'
     sheet_name = 'Untitled spreadsheet'
     credentials_file = '/home/mo-lester/Documents/6-7 Project/service-account.json'
 
