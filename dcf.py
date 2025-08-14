@@ -382,5 +382,7 @@ def spreadsheet():
     ws.update([upload_df.columns.tolist()] + upload_df.values.tolist())
 
 
-ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
-fcf(ticker)
+
+if __name__ == '__main__':
+    ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
+    fcf(ticker)

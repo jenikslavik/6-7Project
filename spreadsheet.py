@@ -1,245 +1,245 @@
+# spreadsheet.py
 import json
 import requests
-import numpy as np
-import pandas as pd
 import gspread
-import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mtick
 from google.oauth2.service_account import Credentials
 
 
-def companyData(ticker):
-    with open('/home/mo-lester/Documents/6-7 Project/company_tickers.json', 'r') as f:
+# ---------- Config ----------
+CSV_PATH = '/home/mo-lester/Documents/6-7 Project/income_output.csv'
+SHEET_NAME = 'Untitled spreadsheet'   # change if you want
+CREDENTIALS_FILE = '/home/mo-lester/Documents/6-7 Project/service-account.json'
+COMPANY_TICKERS_JSON = '/home/mo-lester/Documents/6-7 Project/company_tickers.json'
+
+
+# ---------- Data access ----------
+def get_companyData(ticker: str) -> dict:
+    with open(COMPANY_TICKERS_JSON, 'r') as f:
         data = json.load(f)
-    
+    cik = None
     for v in data.values():
-        if v['ticker'] == ticker:
+        if v.get('ticker') == ticker:
             cik = str(v['cik_str']).zfill(10)
-    
-    return requests.get(f'https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json', headers={'User-Agent': 'janslavik311@gmail.com'}).json()
+            break
+    if not cik:
+        raise ValueError(f"CIK not found for ticker {ticker}.")
+    return requests.get(
+        f'https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json',
+        headers={'User-Agent': 'janslavik311@gmail.com'}
+    ).json()
 
 
-def find_available_metrics(companyFacts):
-    us_gaap = companyFacts['us-gaap']
-    
-    metric_alternatives = {
-        'GrossProfit': ['GrossProfit', 'GrossProfitLoss'],
-        'CostOfRevenue': [
-            'CostOfGoodsAndServicesSold',
-            'CostOfRevenue',
-            'CostOfGoodsSold',
-            'CostOfSales',
-            'CostOfSalesAndServices'
-        ],
-        'OperatingIncome': [
-            'OperatingIncomeLoss',
-            'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
-            'OperatingRevenue'
-        ],
-        'NetIncome': [
-            'NetIncomeLoss',
-            'NetIncomeLossAvailableToCommonStockholdersBasic',
-            'ProfitLoss',
-            'IncomeLossFromContinuingOperations'
-        ]
-    }
-    
-    available_metrics = {}
-    
-    for metric_type, alternatives in metric_alternatives.items():
-        for alt in alternatives:
-            if alt in us_gaap and 'units' in us_gaap[alt] and 'USD' in us_gaap[alt]['units']:
-                available_metrics[metric_type] = alt
-                break
-        
-    return available_metrics
-
-
-def collect_rows(companyFacts, available_metrics):
-    q, y = [], []
-    us_gaap = companyFacts.get('us-gaap', {})
-
-    for metric_type, param in available_metrics.items():
-        if param not in us_gaap:
-            continue
-            
-        if 'units' not in us_gaap[param] or 'USD' not in us_gaap[param]['units']:
-            continue
-            
-        for entry in us_gaap[param]['units']['USD']:
-
-            if not all(k in entry for k in ['start', 'end', 'val', 'form']):
-                continue
-                
-            start, end = pd.to_datetime([entry['start'], entry['end']])
-            duration = (end-start).days
-            
-            row = {
-                    'start_date': entry['start'],
-                    'end_date': entry['end'],
-                    'duration_days': duration,
-                    'value': int(entry['val']/1e6),
-                    'param': metric_type,
-                    'fp': entry.get('fp', ''),
-                    'form': entry['form'],
-                    'filed': entry.get('filed', entry['end'])}
-
-            if entry['form'] == '10-Q' and 85 <= duration <= 95:
-                q.append(row)
-            if entry['form'] in ('10-Q', '10-K') and 270 <= duration <= 370:
-                y.append(row)
-
-    return q, y
-
-
-def tidy_dataframe(rows):        
-    df = pd.DataFrame(rows).dropna(subset=['value'])
-
-    df['filed'] = pd.to_datetime(df.get('filed', df.get('end_date')))
-    df = df.sort_values('filed', ascending=False)
-    df = df.drop_duplicates(['start_date', 'end_date', 'param'], keep='first')
-
-    df = df.pivot(
-        index=['start_date','end_date','duration_days','fp','form','filed'],
-        columns='param',
-        values='value'
-    ).reset_index()
-
-    df['filed'] = pd.to_datetime(df['filed'], errors='coerce')
-    
-    return df.sort_values('end_date')
-
-
-def calculate_q4(df, available_metrics):        
-    if df.empty:
-        return pd.DataFrame()
-    
-    df = df.copy()
-    df[['end_date', 'filed']] = df[['end_date', 'filed']].apply(pd.to_datetime)
-
-    q4 = []
-    
-    for metric_type in available_metrics.keys():
-        if metric_type not in df.columns:
-            continue
-            
-        fy = df[(df.fp == 'FY') & (df.form == '10-K')]
-        q3 = df[(df.fp == 'Q3') & (df.form == '10-Q')]
-        
-        for index, row in fy.iterrows():
-            prev = q3[q3['end_date'] < row['end_date']]
-            if prev.empty:
-                continue
-            
-            q3r = prev.sort_values('end_date').iloc[-1]
-            
-            if pd.isna(row[metric_type]) or pd.isna(q3r[metric_type]):
-                continue
-               
-            q4.append({
-                'start_date': q3r.end_date.strftime('%Y-%m-%d'),
-                'end_date': row.end_date.strftime('%Y-%m-%d'),
-                'duration_days': (row.end_date - q3r.end_date).days,
-                'value': row[metric_type] - q3r[metric_type], 
-                'param': metric_type,
-                'form': 'CALC',
-                'fp': 'Q4',
-                'filed': (row.filed or row.end_date).strftime('%Y-%m-%d')
-            })
-
-    return tidy_dataframe(q4)
-
-
+# ---------- Helpers ----------
 def assign_quarter(row):
-    month = row['end_date'].month
-    year = row['end_date'].year
+    m, y = row['end'].month, row['end'].year
+    q = 'Q1' if m in (1,2,3) else 'Q2' if m in (4,5,6) else 'Q3' if m in (7,8,9) else 'Q4'
+    return f"{q} {y}"
 
-    if month in [1, 2, 3]:
-        quarter = 'Q1'
-    elif month in [4, 5, 6]:
-        quarter = 'Q2'
-    elif month in [7, 8, 9]:
-        quarter = 'Q3'
+def quarter_to_date(quarter_str: str) -> pd.Timestamp:
+    q, year = quarter_str.split()
+    month = {"Q1": 3, "Q2": 6, "Q3": 9, "Q4": 12}[q]
+    return pd.Timestamp(year=int(year), month=month, day=1) + pd.offsets.MonthEnd(0)
+
+def _concept_exists(companyData: dict, concept: str) -> bool:
+    try:
+        return "USD" in companyData["facts"]["us-gaap"][concept]["units"]
+    except KeyError:
+        return False
+
+def _quarterize_series(companyData: dict, concept: str, colname: str) -> pd.DataFrame:
+    """Return DataFrame ['quarter', colname] as TRUE quarterly values."""
+    rows = []
+    for entry in companyData["facts"]["us-gaap"][concept]["units"]["USD"]:
+        start, end = pd.to_datetime([entry["start"], entry["end"]])
+        duration = (end - start).days
+        rows.append({
+            "start": start, "end": end,
+            "filed": pd.to_datetime(entry.get("filed", end)),
+            "fp": entry.get("fp", ""), "duration": duration,
+            colname: entry["val"]
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return pd.DataFrame(columns=["quarter", colname])
+
+    df = (df.sort_values("filed")
+            .drop_duplicates(["start","end"], keep="first")
+            .sort_values("end")
+            .reset_index(drop=True))
+
+    # drop partial quarters (<95d) except legit Q1
+    df = df[~((df["duration"] < 95) & (df["fp"] != "Q1"))].reset_index(drop=True)
+
+    # YTD → quarterly delta
+    out = []
+    for i in range(len(df)):
+        if i == 0 or (df.iloc[i]["end"] - df.iloc[i-1]["end"]).days < 85:
+            continue
+        qval = df.iloc[i][colname] if df.iloc[i]["fp"] == "Q1" else df.iloc[i][colname] - df.iloc[i-1][colname]
+        out.append({"end": df.iloc[i]["end"], colname: qval})
+
+    dfq = pd.DataFrame(out)
+    if dfq.empty:
+        return pd.DataFrame(columns=["quarter", colname])
+
+    dfq["quarter"] = dfq.apply(assign_quarter, axis=1)
+    return dfq[["quarter", colname]]
+
+def _stitch_first_non_null(dflist: list[pd.DataFrame], colname: str) -> pd.DataFrame:
+    if not dflist:
+        return pd.DataFrame(columns=["quarter", colname])
+    dflist = sorted(dflist, key=lambda d: d[colname].notna().sum(), reverse=True)
+    merged = dflist[0].copy()
+    for nxt in dflist[1:]:
+        merged = merged.merge(nxt, on="quarter", how="outer", suffixes=("", "_alt"))
+        merged[colname] = merged[colname].combine_first(merged[f"{colname}_alt"])
+        merged.drop(columns=[c for c in merged.columns if c.endswith("_alt")], inplace=True)
+    tmp = merged["quarter"].str.extract(r"Q(?P<q>\d)\s+(?P<y>\d{4})").astype(int)
+    return (merged.assign(_y=tmp["y"], _q=tmp["q"])
+                  .sort_values(["_y","_q"])
+                  .drop(columns=["_y","_q"])
+                  .reset_index(drop=True))
+
+
+# ---------- Metric builders ----------
+INCOME_CANDIDATES = {
+    "gross_profit": [
+        "GrossProfit", "GrossProfitLoss"
+    ],
+    "operating_income": [
+        "OperatingIncomeLoss", "OperatingIncome"
+    ],
+    "net_income": [
+        "NetIncomeLoss", "ProfitLoss",
+        "NetIncomeLossAvailableToCommonStockholdersBasic"
+    ],
+}
+
+def build_quarterly_income(ticker: str) -> pd.DataFrame:
+    companyData = get_companyData(ticker)
+
+    cols = []
+    for colname, concepts in INCOME_CANDIDATES.items():
+        candidates = [c for c in concepts if _concept_exists(companyData, c)]
+        series = [_quarterize_series(companyData, c, colname) for c in candidates]
+        stitched = _stitch_first_non_null([d for d in series if not d.empty], colname)
+        cols.append(stitched)
+
+    # calendar across all three
+    qlabels = pd.Index([])
+    for df in cols:
+        if not df.empty: qlabels = qlabels.union(df["quarter"])
+    if qlabels.empty:
+        raise ValueError("No quarterly income data found.")
+
+    q_end = [quarter_to_date(q) for q in qlabels]
+    pr = pd.period_range(start=min(q_end), end=max(q_end), freq="Q-DEC")
+    calendar = pd.DataFrame({"quarter": [f"Q{p.quarter} {p.year}" for p in pr]})
+
+    combined = calendar.copy()
+    for df in cols:
+        combined = combined.merge(df, on="quarter", how="left")
+
+    # Save CSV for your Sheets flow
+    combined.to_csv(CSV_PATH, index=False)
+    return combined
+
+
+# ---------- Plotting (same style as dcf.py) ----------
+def plot_metric(df: pd.DataFrame, ticker: str, metric: str):
+    if metric not in ("gross_profit", "operating_income", "net_income"):
+        raise ValueError("metric must be one of: gross_profit, operating_income, net_income")
+
+    plot_df = df[["quarter", metric]].dropna().copy()
+    if plot_df.empty:
+        raise ValueError(f"No data to plot for metric '{metric}'.")
+
+    ax = plot_df.plot(x="quarter", y=metric, kind="bar")
+
+    # Millions if < 5B, else Billions (mirrors your FCF chart behavior). :contentReference[oaicite:1]{index=1}
+    y_max = plot_df[metric].abs().max()
+    if y_max < 5e9:
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
     else:
-        quarter = 'Q4'
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e9:.0f}B'))
 
-    return f"{quarter} {year}"
+    # Build centered year ticks for complete years + vertical guides after Q4. :contentReference[oaicite:2]{index=2}
+    year_to_idxs, q4_positions = {}, []
+    for i, q in enumerate(plot_df["quarter"]):
+        qtr, yr = q.split(); yr = int(yr)
+        year_to_idxs.setdefault(yr, []).append(i)
+        if qtr == "Q4": q4_positions.append(i)
 
+    mid_ticks, mid_labels = [], []
+    for yr, idxs in sorted(year_to_idxs.items()):
+        if len(idxs) == 4:  # only full years
+            left, right = min(idxs), max(idxs)
+            mid = (left + right) / 2.0
+            mid_ticks.append(mid)
+            mid_labels.append(f"{yr % 100:02d}")  # two-digit year, no apostrophe
 
-def create_csv(ticker):
-    companyFacts = companyData(ticker)['facts']
-    
-    available_metrics = find_available_metrics(companyFacts)
-    print("✅ Available metrics:", available_metrics)
+    ax.set_xticks(mid_ticks)
+    ax.set_xticklabels(mid_labels, rotation=0, ha='center')
+    ax.tick_params(axis='x', which='both', length=0)
 
-    q_rows, y_rows = collect_rows(companyFacts, available_metrics)
-    
-    quarterly_df = tidy_dataframe(q_rows)
-    yearly_df = tidy_dataframe(y_rows)
-    q4_df = calculate_q4(yearly_df, available_metrics)
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, which='major', linestyle='--', linewidth=0.8, color='lightgray')
+    for pos in q4_positions:
+        ax.axvline(pos + 0.5, color='lightgray', linestyle='--', linewidth=0.8, zorder=0)
 
-    df = pd.concat([quarterly_df, q4_df], ignore_index=True)
-
-    df = df.sort_values('end_date').drop(columns=['start_date','duration_days','form','filed'])
-    df['end_date'] = pd.to_datetime(df['end_date'])
-    
-    df['fp'] = df.apply(assign_quarter, axis=1)
-
-    metric_cols = list(available_metrics.keys())
-    metric_cols = [m for m in metric_cols if m in df.columns]
-    other_cols = [c for c in df.columns if c not in metric_cols]
-    df = df[other_cols + metric_cols]
-
-    missing = [m for m in available_metrics if m not in df.columns]
-    if missing:
-        print(f"⚠️ Skipping missing metrics: {missing}")
-
-    df = df.drop(columns=['end_date'])
-
-    for metric in metric_cols:
-        for pos in range(len(df)):
-            if pd.isna(df.at[pos, metric]):
-                df.at[pos, metric] = 0
-    
-        df[metric] = df[metric].astype(int)
-
-    return df.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
+    pretty = {
+        "gross_profit": "Gross Profit",
+        "operating_income": "Operating Income",
+        "net_income": "Net Income"
+    }[metric]
+    plt.title(f'{pretty} ({ticker})')
+    plt.tight_layout()
+    plt.show()
 
 
-def spreadsheet():
-    csv_file = '/home/mo-lester/Documents/6-7 Project/output.csv'
-    sheet_name = 'Untitled spreadsheet'
-    credentials_file = '/home/mo-lester/Documents/6-7 Project/service-account.json'
-    
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    credentials = Credentials.from_service_account_file(credentials_file, scopes=scopes)
+# ---------- Google Sheets upload ----------
+def upload_to_sheets(csv_path: str, sheet_name: str, tab_title: str | None = None):
+    scopes = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive'
+    ]
+    credentials = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
     gc = gspread.authorize(credentials)
 
-    spreadsheet = gc.open(sheet_name)
-    worksheet = spreadsheet.sheet1
+    # Open/create spreadsheet
+    try:
+        ss = gc.open(sheet_name)
+    except gspread.SpreadsheetNotFound:
+        ss = gc.create(sheet_name)
 
-    df = pd.read_csv(csv_file)
+    ws = ss.sheet1 if not tab_title else (
+        ss.worksheet(tab_title) if tab_title in [w.title for w in ss.worksheets()]
+        else ss.add_worksheet(title=tab_title, rows=1, cols=1)
+    )
 
-    new_rows = []
-    for i in range(len(df)):
-        row = df.iloc[i]
-
-        converted_row = [str(int(cell)) if isinstance(cell, (np.integer, int)) else str(cell) if not pd.isna(cell) else '' for cell in row]
-        new_rows.append(converted_row)
-
-        if str(row['fp']).startswith('Q4'):
-            new_rows.append(['' for _ in df.columns])
-
-    worksheet.clear()
-    worksheet.update([df.columns.tolist()] + new_rows)
-
-    print(f"✅ Spreadsheet '{sheet_name}' updated with Q4 blank rows.")
+    df = pd.read_csv(csv_path)
+    upload_df = df.astype(object).where(pd.notnull(df), '')
+    ws.clear()
+    ws.update([upload_df.columns.tolist()] + upload_df.values.tolist())
 
 
-def run():
-    ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
+# ---------- CLI ----------
+if __name__ == "__main__":
+    ticker = input("Enter stock ticker symbol (e.g., AAPL, MSFT): ").upper()
+    metric = input("Choose metric [gross_profit | operating_income | net_income]: ").strip().lower()
 
-    create_csv(ticker)
-    spreadsheet()
+    data = build_quarterly_income(ticker)
 
+    # plot the chosen metric
+    plot_metric(data, ticker, metric)
 
-run()
+    # optional upload
+    do_upload = input("Upload to Google Sheets? [y/N]: ").strip().lower() == 'y'
+    if do_upload:
+        upload_to_sheets(CSV_PATH, SHEET_NAME, tab_title=f"Income - {ticker}")
+        print(f"Uploaded to '{SHEET_NAME}' → tab 'Income - {ticker}'.")
+    print(f"CSV saved to: {CSV_PATH}")
