@@ -303,20 +303,33 @@ def fcf(ticker):
     # Format y-axis as billions
     ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
 
-    # Build labels and Q4 positions
-    labels = []
+    # Build label positions: year in the middle of each year (between Q2 & Q3)
+    labels = [""] * len(plot_df)
     q4_positions = []
+    year_positions = {}
     for i, q in enumerate(plot_df["quarter"]):
-        if q.startswith("Q4"):
-            labels.append(q.split()[1])   # year only
+        qtr, yr = q.split()
+        yr = int(yr)
+        if yr not in year_positions:
+            year_positions[yr] = []
+        year_positions[yr].append(i)
+        if qtr == "Q4":
             q4_positions.append(i)
-        else:
-            labels.append("")
 
-    ax.set_xticklabels(labels, rotation=45, ha='right')
+    for yr, idxs in year_positions.items():
+        mid_pos = idxs[len(idxs) // 2]  # middle quarter index
+        labels[mid_pos] = f"{yr % 100:02d}\u2019"  # two-digit + apostrophe
 
-    # Draw light vertical line after each Q4 bar
-    ax.set_axisbelow(True)  # keep grid/lines behind bars
+    # Apply labels horizontally
+    ax.set_xticklabels(labels, rotation=0, ha='center')
+
+    # Gridlines behind bars
+    ax.set_axisbelow(True)
+
+    # Horizontal dashed gridlines (y-axis)
+    ax.yaxis.grid(True, which='major', linestyle='--', linewidth=0.8, color='lightgray')
+
+    # Vertical dashed line after each Q4 bar
     for pos in q4_positions:
         ax.axvline(pos + 0.5, color='lightgray', linestyle='--', linewidth=0.8, zorder=0)
 
