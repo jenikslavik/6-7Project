@@ -99,14 +99,14 @@ def wacc(ticker):
     corporate_tax_rate = .21
 
     return {
-        'market_cap': int(market_cap / 1_000_000),
-        'long_term_debt': book_value_of_debt[0] / 1_000_000,
-        'operating_lease_liabilities': book_value_of_debt[1] / 1_000_000,
-        'book_value_of_debt': sum(book_value_of_debt) / 1_000_000,
+        'market_cap': market_cap / 1e6,
+        'long_term_debt': book_value_of_debt[0] / 1e6,
+        'operating_lease_liabilities': book_value_of_debt[1] / 1e6,
+        'book_value_of_debt': sum(book_value_of_debt) / 1e6,
         'risk_free_rate': risk_free_rate,
         'beta': beta,
         'cost_of_equity': cost_of_equity,
-        'interest_expense': interest_expense / 1_000_000,
+        'interest_expense': interest_expense / 1e6,
         'cost_of_debt': cost_of_debt,
         'wacc': (
             (market_cap / (market_cap + sum(book_value_of_debt))) * cost_of_equity
@@ -293,13 +293,35 @@ def fcf(ticker):
         combined["cfoa"] - combined["capex"]
     )
 
+    # ----- Save CSV -----
+    combined.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
+
     # ----- Plot -----
-    plot_df = combined[["quarter", "fcf"]]
+    plot_df = combined[["quarter", "fcf"]].copy()
     ax = plot_df.plot(x="quarter", y="fcf", kind="bar")
-    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e9:.0f}B'))
-    labels = [t.get_text() if "Q4" in t.get_text() else "" for t in ax.get_xticklabels()]
-    ax.set_xticklabels(labels)
+
+    # Format y-axis as billions
+    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e6:.0f}M'))
+
+    # Build labels and Q4 positions
+    labels = []
+    q4_positions = []
+    for i, q in enumerate(plot_df["quarter"]):
+        if q.startswith("Q4"):
+            labels.append(q.split()[1])   # year only
+            q4_positions.append(i)
+        else:
+            labels.append("")
+
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+
+    # Draw light vertical line after each Q4 bar
+    ax.set_axisbelow(True)  # keep grid/lines behind bars
+    for pos in q4_positions:
+        ax.axvline(pos + 0.5, color='lightgray', linestyle='--', linewidth=0.8, zorder=0)
+
     plt.title(f'Free cash flow ({ticker})')
+    plt.tight_layout()
     plt.show()
 
     return combined.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
@@ -341,4 +363,3 @@ def spreadsheet():
 
 ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 fcf(ticker)
-spreadsheet()
