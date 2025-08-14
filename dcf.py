@@ -1,10 +1,12 @@
 import json
 import requests
+import gspread
 import pandas as pd
 import numpy as np
+import yfinance as yf
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
-import yfinance as yf
+from google.oauth2.service_account import Credentials
 
 
 def get_companyData(ticker):
@@ -23,7 +25,6 @@ def get_companyData(ticker):
 
 def ttm_interest_expense(ticker):
     companyData = get_companyData(ticker)
-
 
     rows = []
     q4_rows = []
@@ -135,11 +136,9 @@ def assign_quarter(row):
 
 def quarter_to_date(quarter_str):
     q, year = quarter_str.split()
-    month = {"Q1": 3, "Q2": 6, "Q3": 9, "Q4": 12}[q]  # use end month of quarter
-    return pd.Timestamp(year=int(year), month=month, day=1)
+    month = {"Q1": 3, "Q2": 6, "Q3": 9, "Q4": 12}[q]
+    return pd.Timestamp(year=int(year), month=month, day=1) + pd.offsets.MonthEnd(0)
 
-
-# --- Add/replace below ---
 
 CANDIDATES = {
     "cfoa": [
@@ -164,11 +163,13 @@ CANDIDATES = {
     ],
 }
 
+
 def _concept_exists(companyData, concept):
     try:
         return "USD" in companyData["facts"]["us-gaap"][concept]["units"]
     except KeyError:
         return False
+
 
 def _quarterize_series(companyData, concept, colname):
     """Return DataFrame: ['quarter', colname], true quarterly, deduped & sorted."""
@@ -215,6 +216,7 @@ def _quarterize_series(companyData, concept, colname):
     dfq["quarter"] = dfq.apply(assign_quarter, axis=1)
     return dfq[["quarter", colname]]
 
+
 def _stitch_first_non_null(dflist, colname):
     """Merge multiple quarterly series into one by taking first non-null by priority."""
     if not dflist:
@@ -237,60 +239,106 @@ def _stitch_first_non_null(dflist, colname):
                   .drop(columns=["_y","_q"])
                   .reset_index(drop=True))
 
+
 def _normalize_capex_sign(series):
     """Return CapEx as positive cash outflow."""
     if series.dropna().median() < 0:
         return -series  # make it positive spend
     return series
 
+
 def fcf(ticker):
     companyData = get_companyData(ticker)
 
-    # Build CFOA
+    # ----- Build CFOA -----
     cfo_candidates = [c for c in CANDIDATES["cfoa"] if _concept_exists(companyData, c)]
     cfo_series = [_quarterize_series(companyData, c, "cfoa") for c in cfo_candidates]
     cfoa = _stitch_first_non_null([df for df in cfo_series if not df.empty], "cfoa")
 
-    # Build CapEx
+    # ----- Build CapEx -----
     capex_candidates = [c for c in CANDIDATES["capex"] if _concept_exists(companyData, c)]
     capex_series = [_quarterize_series(companyData, c, "capex") for c in capex_candidates]
     capex = _stitch_first_non_null([df for df in capex_series if not df.empty], "capex")
 
-    # Make a full quarter calendar spanning both series
     if cfoa.empty and capex.empty:
         raise ValueError("No CFOA or CapEx data found for this filer.")
 
-    frames = [d for d in [cfoa, capex] if not d.empty]
-    allq = pd.concat(frames)["quarter"].unique().tolist()
-    tmp = pd.DataFrame({"quarter": allq})
-    tmp2 = tmp["quarter"].str.extract(r"Q(?P<q>\d)\s+(?P<y>\d{4})").astype(int)
-    calendar = (tmp.assign(_y=tmp2["y"], _q=tmp2["q"])
-                    .sort_values(["_y","_q"])
-                    .drop(columns=["_y","_q"])
-                    .reset_index(drop=True))
+    # ----- Continuous quarter calendar -----
+    quarter_labels = pd.Index([])
+    for df in [cfoa, capex]:
+        if not df.empty:
+            quarter_labels = quarter_labels.union(df["quarter"])
 
-    # Merge & compute FCF
-    combined = (calendar
-                .merge(cfoa, on="quarter", how="left")
-                .merge(capex, on="quarter", how="left"))
+    q_end_dates = [quarter_to_date(q) for q in quarter_labels]
+    start, end = min(q_end_dates), max(q_end_dates)
 
-    # Normalize CapEx sign to positive spend
-    combined["capex"] = _normalize_capex_sign(combined["capex"])
+    pr = pd.period_range(start=start, end=end, freq="Q-DEC")
+    calendar = pd.DataFrame({"quarter": [f"Q{p.quarter} {p.year}" for p in pr]})
 
-    combined["fcf"] = combined["cfoa"].fillna(0) - combined["capex"].fillna(0)
+    # ----- Merge & compute FCF -----
+    combined = (
+        calendar
+        .merge(cfoa, on="quarter", how="left")
+        .merge(capex, on="quarter", how="left")
+    )
 
-    # (Optional) plot, keeping your quarterly-label rule
-    plot_df = combined[["quarter", "fcf"]].copy()
+    # Normalize CapEx sign only where present
+    if combined["capex"].notna().any():
+        combined.loc[combined["capex"].notna(), "capex"] = _normalize_capex_sign(combined["capex"])
+
+    # FCF = blank if either CFOA or CapEx is blank
+    combined["fcf"] = np.where(
+        combined["cfoa"].isna() | combined["capex"].isna(),
+        np.nan,
+        combined["cfoa"] - combined["capex"]
+    )
+
+    # ----- Plot -----
+    plot_df = combined[["quarter", "fcf"]]
     ax = plot_df.plot(x="quarter", y="fcf", kind="bar")
     ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f'${x/1e9:.0f}B'))
     labels = [t.get_text() if "Q4" in t.get_text() else "" for t in ax.get_xticklabels()]
     ax.set_xticklabels(labels)
+    plt.title(f'Free cash flow ({ticker})')
     plt.show()
 
-    return combined
+    return combined.to_csv('/home/mo-lester/Documents/6-7 Project/output.csv', index=False)
 
 
+
+
+def spreadsheet():
+    csv_file = '/home/mo-lester/Documents/6-7 Project/output.csv'
+    sheet_name = 'Untitled spreadsheet'
+    credentials_file = '/home/mo-lester/Documents/6-7 Project/service-account.json'
+
+    # Auth
+    scopes = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive'
+    ]
+    credentials = Credentials.from_service_account_file(credentials_file, scopes=scopes)
+    gc = gspread.authorize(credentials)
+
+    # Open (or create) the spreadsheet
+    try:
+        ss = gc.open(sheet_name)
+    except gspread.SpreadsheetNotFound:
+        ss = gc.create(sheet_name)
+        # If needed: share the sheet so you can see it in Drive
+        # ss.share('your.email@example.com', perm_type='user', role='writer')
+
+    ws = ss.sheet1
+
+    # Read the CSV and convert NaN -> '' ONLY for upload (Sheets/JSON can't handle NaN)
+    df = pd.read_csv(csv_file)
+    upload_df = df.astype(object).where(pd.notnull(df), '')
+
+    # Push header + data
+    ws.clear()
+    ws.update([upload_df.columns.tolist()] + upload_df.values.tolist())
 
 
 ticker = input('Enter stock ticker symbol (e.g., AAPL, MSFT): ').upper()
 fcf(ticker)
+spreadsheet()
