@@ -1,11 +1,11 @@
 import json
 import requests
-import gspread
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
+import gspread
 from google.oauth2.service_account import Credentials
 
 
@@ -292,9 +292,6 @@ def fcf(ticker):
         np.nan,
         combined["cfoa"] - combined["capex"]
     )
-
-    # ----- Save CSV -----
-    combined.to_csv('/home/mo-lester/Documents/6-7 Project/fcf_output.csv', index=False)
 
     # ----- Plot -----
     plot_df = combined[["quarter", "fcf"]].copy()
